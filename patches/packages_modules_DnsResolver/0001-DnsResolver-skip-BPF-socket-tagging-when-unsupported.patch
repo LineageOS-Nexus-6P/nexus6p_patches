@@ -1,0 +1,35 @@
+From 67f49878b56d3c7fe141fe001941300e045b58f3 Mon Sep 17 00:00:00 2001
+From: derveror <derveror@gmail.com>
+Date: Sun, 11 Oct 2026 17:31:34 -0400
+Subject: [PATCH] DnsResolver: skip BPF socket tagging when unsupported
+
+Change-Id: Ib5b1451326f3abebdd4d96145a883f526a89f6a9
+---
+ resolv_private.h | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/resolv_private.h b/resolv_private.h
+index 3c6461f4782fa80522893f370727d308d1c9593d..1623c33b98b39cd93ec28181a97a46a67025391e 100644
+--- a/resolv_private.h
++++ b/resolv_private.h
+@@ -49,6 +49,7 @@
+ #pragma once
+ 
+ #include <android-base/logging.h>
++#include <android-base/properties.h>
+ #include <android-base/unique_fd.h>
+ #include <private/android_filesystem_config.h>  // AID_DNS
+ 
+@@ -236,7 +237,8 @@ android::net::IpVersion ipFamilyToIPVersion(int ipFamily);
+ 
+ inline void resolv_tag_socket(int sock, uid_t uid, pid_t pid) {
+     // This is effectively equivalent to testing for R+
+-    if (android::net::gResNetdCallbacks.tagSocket != nullptr) {
++    if (android::base::GetBoolProperty("ro.kernel.ebpf.supported", true) &&
++        android::net::gResNetdCallbacks.tagSocket != nullptr) {
+         if (int err = android::net::gResNetdCallbacks.tagSocket(sock, TAG_SYSTEM_DNS, uid, pid)) {
+             LOG(WARNING) << "Failed to tag socket: " << strerror(-err);
+         }
+-- 
+2.43.0
+

@@ -1,0 +1,35 @@
+From fdadc63a1988b326c81899d0908f94d825f00366 Mon Sep 17 00:00:00 2001
+From: derveror <derveror@gmail.com>
+Date: Sun, 11 Oct 2026 17:31:34 -0400
+Subject: [PATCH] lmkd: support in-kernel LMK without PSI monitoring
+
+Change-Id: I52507956f4062b425e7b9a3f8275fd3360b3b807
+---
+ lmkd.cpp | 11 +++++++++++
+ 1 file changed, 11 insertions(+)
+
+diff --git a/lmkd.cpp b/lmkd.cpp
+index 54129c77941992d66a04c3d91b0085f9210bb50b..d4827c16236a5b926ac8c61c5d137efa200166a0 100644
+--- a/lmkd.cpp
++++ b/lmkd.cpp
+@@ -1599,6 +1599,17 @@ static void ctrl_command_handler(int dsock_idx) {
+     case LMK_START_MONITORING:
+         if (nargs != 0)
+             goto wronglen;
++        /*
++         * Legacy kernels can provide the in-kernel low memory killer without
++         * PSI or a memory cgroup. ActivityManager sends this command after
++         * boot unconditionally, but the in-kernel path is already active and
++         * does not need userspace pressure monitors. Trying to initialize
++         * them would fail and deliberately terminate lmkd during SetupWizard.
++         */
++        if (use_inkernel_interface) {
++            ALOGI("Skipping userspace memory pressure monitoring with in-kernel low memory killer");
++            return;
++        }
+         // Registration is needed only if it was skipped earlier.
+         if (monitors_initialized)
+             return;
+-- 
+2.43.0
+

@@ -1,0 +1,463 @@
+From c39132859c1995f4c5630aeabc501ed6b437b51d Mon Sep 17 00:00:00 2001
+From: derveror <derveror@gmail.com>
+Date: Sun, 11 Oct 2026 17:31:33 -0400
+Subject: [PATCH] telephony: stabilize legacy IMS data handover
+
+Change-Id: Id07de41ea5551bf59c25d3d9a838845c1f30a53b
+---
+ .../telephony/data/DataConfigManager.java     |  9 ++
+ .../internal/telephony/data/DataNetwork.java  | 65 ++++++++++++++
+ .../telephony/data/DataNetworkController.java | 90 +++++++++++++++++++
+ .../data/DataNetworkControllerTest.java       | 49 ++++++++++
+ .../telephony/data/DataNetworkTest.java       | 80 +++++++++++++++++
+ 5 files changed, 293 insertions(+)
+
+diff --git a/src/java/com/android/internal/telephony/data/DataConfigManager.java b/src/java/com/android/internal/telephony/data/DataConfigManager.java
+index 6dec224279059e09e2b626e29bc73fca0650dde9..2af30809413e0755d822ee8dc3dd508cfc477084 100644
+--- a/src/java/com/android/internal/telephony/data/DataConfigManager.java
++++ b/src/java/com/android/internal/telephony/data/DataConfigManager.java
+@@ -27,6 +27,7 @@ import android.os.Handler;
+ import android.os.Looper;
+ import android.os.Message;
+ import android.os.PersistableBundle;
++import android.os.SystemProperties;
+ import android.provider.DeviceConfig;
+ import android.telephony.Annotation.ApnType;
+ import android.telephony.Annotation.NetCapability;
+@@ -744,6 +745,14 @@ public class DataConfigManager extends Handler {
+         return Collections.unmodifiableSet(mCapabilitiesExemptFromSingleDataList);
+     }
+ 
++    /**
++     * Whether a legacy modem can merge the default IPv4 bearer into an already active IMS data
++     * call while continuing to report a single CID.
++     */
++    public boolean isLegacyImsInternetMergeEnabled() {
++        return SystemProperties.getBoolean("ro.telephony.legacy_ims_internet_merge", false);
++    }
++
+     /**
+      * @param regState The modem reported data registration state.
+      * @return {@code true} if should keep IMS network in case of moving to non VOPS area.
+diff --git a/src/java/com/android/internal/telephony/data/DataNetwork.java b/src/java/com/android/internal/telephony/data/DataNetwork.java
+index 738c60f6957c85d47b63e52228b10bada3f328d6..2922350d90ac78596f47ede4f85c74bdaed6828f 100644
+--- a/src/java/com/android/internal/telephony/data/DataNetwork.java
++++ b/src/java/com/android/internal/telephony/data/DataNetwork.java
+@@ -541,6 +541,11 @@ public class DataNetwork extends StateMachine {
+      */
+     private boolean mEverConnected = false;
+ 
++    /**
++     * The legacy modem merged a default IPv4 bearer into this already-connected IMS CID.
++     */
++    private boolean mLegacyImsInternetMerged = false;
++
+     /** RIL interface. */
+     @NonNull
+     private final CommandsInterface mRil;
+@@ -2318,6 +2323,44 @@ public class DataNetwork extends StateMachine {
+                 || !oldImmutableCapabilities.containsAll(newImmutableCapabilities);
+     }
+ 
++    /**
++     * Angler's legacy RIL can fold a default bearer into the already active IMS CID. In that
++     * case INTERNET and the derived NOT_RESTRICTED capability are added to the same physical
++     * network. Replacing the NetworkAgent for that capability-only transition changes the Android
++     * Network handle and forces the IMS stack to tear down an otherwise healthy SIP/RTP session.
++     */
++    private boolean isLegacyImsInternetCapabilityTransition(
++            @NonNull NetworkCapabilities oldCapabilities,
++            @NonNull NetworkCapabilities newCapabilities) {
++        if (!mDataConfigManager.isLegacyImsInternetMergeEnabled()
++                || !mDataProfile.canSatisfy(NetworkCapabilities.NET_CAPABILITY_IMS)
++                || oldCapabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
++                == newCapabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)) {
++            return false;
++        }
++
++        List<Integer> oldCapabilitiesWithoutLegacyMerge = Arrays.stream(
++                oldCapabilities.getCapabilities()).boxed().collect(Collectors.toList());
++        oldCapabilitiesWithoutLegacyMerge.removeAll(MUTABLE_CAPABILITIES);
++        oldCapabilitiesWithoutLegacyMerge.remove(Integer.valueOf(
++                NetworkCapabilities.NET_CAPABILITY_INTERNET));
++        oldCapabilitiesWithoutLegacyMerge.remove(Integer.valueOf(
++                NetworkCapabilities.NET_CAPABILITY_NOT_RESTRICTED));
++
++        List<Integer> newCapabilitiesWithoutLegacyMerge = Arrays.stream(
++                newCapabilities.getCapabilities()).boxed().collect(Collectors.toList());
++        newCapabilitiesWithoutLegacyMerge.removeAll(MUTABLE_CAPABILITIES);
++        newCapabilitiesWithoutLegacyMerge.remove(Integer.valueOf(
++                NetworkCapabilities.NET_CAPABILITY_INTERNET));
++        newCapabilitiesWithoutLegacyMerge.remove(Integer.valueOf(
++                NetworkCapabilities.NET_CAPABILITY_NOT_RESTRICTED));
++
++        return oldCapabilitiesWithoutLegacyMerge.size()
++                == newCapabilitiesWithoutLegacyMerge.size()
++                && oldCapabilitiesWithoutLegacyMerge.containsAll(
++                        newCapabilitiesWithoutLegacyMerge);
++    }
++
+     /**
+      * In some rare cases we need to re-create the network agent, for example, underlying network
+      * IP changed, or when we unfortunately need to remove/add a immutable network capability.
+@@ -2389,6 +2432,10 @@ public class DataNetwork extends StateMachine {
+             }
+         }
+ 
++        if (mLegacyImsInternetMerged) {
++            builder.addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET);
++        }
++
+         // If MMTEL capability is requested, we should not remove it because it's an immutable
+         // capability defined by connectivity service. When the device enters from VoPS to non-VoPS,
+         // we should perform grace tear down from data network controller if needed.
+@@ -2604,6 +2651,7 @@ public class DataNetwork extends StateMachine {
+             // service would not close sockets for clients if a network request becomes
+             // unsatisfiable.
+             if (mEverConnected && areImmutableCapabilitiesChanged(mNetworkCapabilities, nc)
++                    && !isLegacyImsInternetCapabilityTransition(mNetworkCapabilities, nc)
+                     && (isConnected() || isHandoverInProgress())) {
+                 // Before connectivity service supports making all capabilities mutable, it is
+                 // suggested to de-register and re-register the network agent if it is needed to
+@@ -2875,6 +2923,23 @@ public class DataNetwork extends StateMachine {
+             mQosCallbackTracker.updateSessions(mQosBearerSessions);
+         }
+ 
++        if (mDataConfigManager.isLegacyImsInternetMergeEnabled()
++                && mEverConnected
++                && mDataProfile.canSatisfy(NetworkCapabilities.NET_CAPABILITY_IMS)) {
++            boolean hadIpv4DefaultRoute = mLinkProperties.getRoutes().stream()
++                    .anyMatch(route -> route.isDefaultRoute()
++                            && route.getDestination().getAddress()
++                            instanceof java.net.Inet4Address);
++            boolean hasIpv4DefaultRoute = linkProperties.getRoutes().stream()
++                    .anyMatch(route -> route.isDefaultRoute()
++                            && route.getDestination().getAddress()
++                            instanceof java.net.Inet4Address);
++            if (!mLegacyImsInternetMerged && !hadIpv4DefaultRoute && hasIpv4DefaultRoute) {
++                mLegacyImsInternetMerged = true;
++                logl("Legacy RIL merged default IPv4 bearer into IMS CID; expose INTERNET");
++            }
++        }
++
+         if (!linkProperties.equals(mLinkProperties)) {
+             // If the new link properties is not compatible (e.g. IP changes, interface changes),
+             // then we should de-register the network agent and re-create a new one.
+diff --git a/src/java/com/android/internal/telephony/data/DataNetworkController.java b/src/java/com/android/internal/telephony/data/DataNetworkController.java
+index b5bfc1d318d03d56644dc325c39bf21fe26b4fa9..5aed312065629caeecd460dc4f4d13683425c2d0 100644
+--- a/src/java/com/android/internal/telephony/data/DataNetworkController.java
++++ b/src/java/com/android/internal/telephony/data/DataNetworkController.java
+@@ -217,6 +217,20 @@ public class DataNetworkController extends Handler {
+     /** Event for tracking area code changed. */
+     private static final int EVENT_TAC_CHANGED = 25;
+ 
++    /** Event for releasing the Angler legacy IMS-first startup gate. */
++    private static final int EVENT_LEGACY_IMS_FIRST_TIMEOUT = 26;
++
++    /**
++     * Maximum time to wait for the dedicated IMS bearer before allowing default data.
++     *
++     * <p>Angler's legacy QCRIL/MPSS can merge default data into an existing IMS CID, but cannot
++     * establish IMS after the default CID owns rmnet_data0. PhhIms can take about 20 seconds to
++     * publish its request during a cold boot, so keep a bounded 30 second window and fall back to
++     * normal default-data setup for carriers without IMS.
++     */
++    @VisibleForTesting
++    static final long LEGACY_IMS_FIRST_TIMEOUT_MILLIS = TimeUnit.SECONDS.toMillis(30);
++
+     /** The supported IMS features. This is for IMS graceful tear down support. */
+     private static final Collection<Integer> SUPPORTED_IMS_FEATURES =
+             List.of(ImsFeature.FEATURE_MMTEL, ImsFeature.FEATURE_RCS);
+@@ -399,6 +413,12 @@ public class DataNetworkController extends Handler {
+     @NonNull
+     private final Set<Integer> mRegisteredImsFeatures = new ArraySet<>();
+ 
++    /** True while the bounded Angler IMS-first startup window is active. */
++    private boolean mLegacyImsFirstGateStarted = false;
++
++    /** True after IMS connected or the bounded startup window expired. */
++    private boolean mLegacyImsFirstGateOpen = false;
++
+     /** IMS feature package names. Key is the IMS feature, value is the package name. */
+     @NonNull
+     private final SparseArray<String> mImsFeaturePackageName = new SparseArray<>();
+@@ -1189,6 +1209,13 @@ public class DataNetworkController extends Handler {
+                         DataEvaluationReason.TAC_CHANGED),
+                         REEVALUATE_UNSATISFIED_NETWORK_REQUESTS_TAC_CHANGED_DELAY_MILLIS);
+                 break;
++            case EVENT_LEGACY_IMS_FIRST_TIMEOUT:
++                mLegacyImsFirstGateStarted = false;
++                mLegacyImsFirstGateOpen = true;
++                logl("Legacy IMS-first gate timed out; allow default data fallback");
++                sendMessage(obtainMessage(EVENT_REEVALUATE_UNSATISFIED_NETWORK_REQUESTS,
++                        DataEvaluationReason.DATA_NETWORK_CAPABILITIES_CHANGED));
++                break;
+             case EVENT_DATA_SERVICE_BINDING_CHANGED:
+                 ar = (AsyncResult) msg.obj;
+                 int transport = (int) ar.userObj;
+@@ -2877,6 +2904,14 @@ public class DataNetworkController extends Handler {
+         log("onSetupDataNetwork: dataProfile=" + dataProfile + ", retryEntry="
+                 + dataSetupRetryEntry + ", allowed reason=" + allowedReason + ", service state="
+                 + mServiceState);
++
++        if (shouldDeferInternetUntilLegacyIms(dataProfile)) {
++            if (dataSetupRetryEntry != null) {
++                dataSetupRetryEntry.setState(DataRetryEntry.RETRY_STATE_CANCELLED);
++            }
++            return;
++        }
++
+         for (DataNetwork dataNetwork : mDataNetworkList) {
+             DataProfile currentDataProfile = dataNetwork.getDataProfile();
+             if (dataProfile.equals(currentDataProfile)
+@@ -3110,6 +3145,17 @@ public class DataNetworkController extends Handler {
+     private void onDataNetworkConnected(@NonNull DataNetwork dataNetwork) {
+         logl("onDataNetworkConnected: " + dataNetwork);
+ 
++        if (mDataConfigManager.isLegacyImsInternetMergeEnabled()
++                && dataNetwork.getDataProfile().canSatisfy(
++                        NetworkCapabilities.NET_CAPABILITY_IMS)) {
++            removeMessages(EVENT_LEGACY_IMS_FIRST_TIMEOUT);
++            mLegacyImsFirstGateStarted = false;
++            mLegacyImsFirstGateOpen = true;
++            logl("Legacy IMS-first gate opened by connected IMS bearer");
++            sendMessage(obtainMessage(EVENT_REEVALUATE_UNSATISFIED_NETWORK_REQUESTS,
++                    DataEvaluationReason.DATA_NETWORK_CAPABILITIES_CHANGED));
++        }
++
+         mDataNetworkControllerCallbacks.forEach(callback -> callback.invokeFromExecutor(
+                 () -> callback.onDataNetworkConnected(dataNetwork.getTransport(),
+                         dataNetwork.getDataProfile())));
+@@ -3551,6 +3597,7 @@ public class DataNetworkController extends Handler {
+      */
+     private void onSimAbsent() {
+         log("onSimAbsent");
++        resetLegacyImsFirstGate();
+         sendMessage(obtainMessage(EVENT_REEVALUATE_EXISTING_DATA_NETWORKS,
+                 DataEvaluationReason.SIM_REMOVAL));
+     }
+@@ -4110,6 +4157,7 @@ public class DataNetworkController extends Handler {
+      */
+     private void onTearDownAllDataNetworks(@TearDownReason int reason) {
+         log("onTearDownAllDataNetworks: reason=" + DataNetwork.tearDownReasonToString(reason));
++        resetLegacyImsFirstGate();
+         if (mDataNetworkList.isEmpty()) {
+             log("tearDownAllDataNetworks: No pending networks. All disconnected now.");
+             return;
+@@ -4122,6 +4170,48 @@ public class DataNetworkController extends Handler {
+         }
+     }
+ 
++    /**
++     * Serialize legacy IMS and default setup so QCRIL never receives both requests concurrently.
++     */
++    @VisibleForTesting
++    boolean shouldDeferInternetUntilLegacyIms(@NonNull DataProfile dataProfile) {
++        if (!mDataConfigManager.isLegacyImsInternetMergeEnabled()
++                || !dataProfile.canSatisfy(NetworkCapabilities.NET_CAPABILITY_INTERNET)
++                || dataProfile.canSatisfy(NetworkCapabilities.NET_CAPABILITY_IMS)) {
++            return false;
++        }
++
++        boolean imsConnected = mDataNetworkList.stream().anyMatch(dataNetwork ->
++                dataNetwork.isConnected()
++                        && dataNetwork.getDataProfile().canSatisfy(
++                                NetworkCapabilities.NET_CAPABILITY_IMS));
++        if (imsConnected) {
++            removeMessages(EVENT_LEGACY_IMS_FIRST_TIMEOUT);
++            mLegacyImsFirstGateStarted = false;
++            mLegacyImsFirstGateOpen = true;
++            return false;
++        }
++
++        if (mLegacyImsFirstGateOpen) {
++            return false;
++        }
++
++        if (!mLegacyImsFirstGateStarted) {
++            mLegacyImsFirstGateStarted = true;
++            sendEmptyMessageDelayed(EVENT_LEGACY_IMS_FIRST_TIMEOUT,
++                    LEGACY_IMS_FIRST_TIMEOUT_MILLIS);
++            logl("Legacy IMS-first gate: defer default data until IMS connects or timeout");
++        }
++        return true;
++    }
++
++    /** Reset the IMS-first gate for the next radio/SIM attach cycle. */
++    private void resetLegacyImsFirstGate() {
++        removeMessages(EVENT_LEGACY_IMS_FIRST_TIMEOUT);
++        mLegacyImsFirstGateStarted = false;
++        mLegacyImsFirstGateOpen = false;
++    }
++
+     /**
+      * Evaluate the pending IMS de-registration networks and tear it down if it is safe to do that.
+      */
+diff --git a/tests/telephonytests/src/com/android/internal/telephony/data/DataNetworkControllerTest.java b/tests/telephonytests/src/com/android/internal/telephony/data/DataNetworkControllerTest.java
+index 3f2d6f295a36c03969377d17543816576d5ab983..c0052502cbd040f713ca3bed4daff09b48271943 100644
+--- a/tests/telephonytests/src/com/android/internal/telephony/data/DataNetworkControllerTest.java
++++ b/tests/telephonytests/src/com/android/internal/telephony/data/DataNetworkControllerTest.java
+@@ -1237,6 +1237,16 @@ public class DataNetworkControllerTest extends TelephonyTest {
+         return (List<DataNetwork>) field.get(mDataNetworkControllerUT);
+     }
+ 
++    private void enableLegacyImsInternetMergeForTest() throws Exception {
++        Field field = DataNetworkController.class.getDeclaredField("mDataConfigManager");
++        field.setAccessible(true);
++        DataConfigManager dataConfigManager = Mockito.spy(
++                (DataConfigManager) field.get(mDataNetworkControllerUT));
++        doReturn(true).when(dataConfigManager).isLegacyImsInternetMergeEnabled();
++        replaceInstance(DataNetworkController.class, "mDataConfigManager",
++                mDataNetworkControllerUT, dataConfigManager);
++    }
++
+     private void verifyInternetConnected() throws Exception {
+         verify(mMockedDataNetworkControllerCallback).onConnectedInternetDataNetworksChanged(any());
+         verifyConnectedNetworkHasCapabilities(NetworkCapabilities.NET_CAPABILITY_INTERNET);
+@@ -1398,6 +1408,45 @@ public class DataNetworkControllerTest extends TelephonyTest {
+                 InetAddresses.parseNumericAddress(IPV6_ADDRESS));
+     }
+ 
++    @Test
++    public void testLegacyImsFirstDefersDefaultUntilImsConnected() throws Exception {
++        enableLegacyImsInternetMergeForTest();
++        setSuccessfulSetupDataResponse(mMockedWwanDataServiceManager, 1, 5000);
++
++        mDataNetworkControllerUT.addNetworkRequest(
++                createNetworkRequest(NetworkCapabilities.NET_CAPABILITY_IMS));
++        mDataNetworkControllerUT.addNetworkRequest(
++                createNetworkRequest(NetworkCapabilities.NET_CAPABILITY_INTERNET));
++        processAllMessages();
++
++        assertThat(getDataNetworks()).hasSize(1);
++        assertThat(getDataNetworks().get(0).getDataProfile()).isEqualTo(mImsCellularDataProfile);
++        assertThat(getDataNetworks().get(0).isConnecting()).isTrue();
++
++        moveTimeForward(5000);
++        processAllMessages();
++
++        assertThat(getDataNetworks()).hasSize(2);
++        verifyConnectedNetworkHasDataProfile(mImsCellularDataProfile);
++        assertThat(getDataNetworks().stream().anyMatch(dataNetwork ->
++                dataNetwork.getDataProfile().equals(mGeneralPurposeDataProfile))).isTrue();
++    }
++
++    @Test
++    public void testLegacyImsFirstFallsBackWhenImsRequestIsAbsent() throws Exception {
++        enableLegacyImsInternetMergeForTest();
++
++        mDataNetworkControllerUT.addNetworkRequest(
++                createNetworkRequest(NetworkCapabilities.NET_CAPABILITY_INTERNET));
++        processAllMessages();
++        assertThat(getDataNetworks()).isEmpty();
++
++        moveTimeForward(DataNetworkController.LEGACY_IMS_FIRST_TIMEOUT_MILLIS);
++        processAllMessages();
++
++        verifyConnectedNetworkHasDataProfile(mGeneralPurposeDataProfile);
++    }
++
+     @Test
+     public void testSetupEnterpriseDataNetwork() throws Exception {
+         List<TrafficDescriptor> tdList = new ArrayList<>();
+diff --git a/tests/telephonytests/src/com/android/internal/telephony/data/DataNetworkTest.java b/tests/telephonytests/src/com/android/internal/telephony/data/DataNetworkTest.java
+index f832a6bd210157575c3f317434b1a51d13ce5751..a8465f8721ec6007865125c730426fee6dc9f8b2 100644
+--- a/tests/telephonytests/src/com/android/internal/telephony/data/DataNetworkTest.java
++++ b/tests/telephonytests/src/com/android/internal/telephony/data/DataNetworkTest.java
+@@ -310,6 +310,26 @@ public class DataNetworkTest extends TelephonyTest {
+                 .build();
+     }
+ 
++    private DataCallResponse createIpv6OnlyDataCallResponse(int cid) {
++        return new DataCallResponse.Builder()
++                .setCause(0)
++                .setRetryDurationMillis(-1L)
++                .setId(cid)
++                .setLinkStatus(DataCallResponse.LINK_STATUS_ACTIVE)
++                .setProtocolType(ApnSetting.PROTOCOL_IPV4V6)
++                .setInterfaceName("ifname")
++                .setAddresses(List.of(new LinkAddress(IPV6_ADDRESS + "/64")))
++                .setDnsAddresses(List.of(InetAddresses.parseNumericAddress("fd00:976a::9")))
++                .setGatewayAddresses(List.of(InetAddresses.parseNumericAddress("fe80::2")))
++                .setPcscfAddresses(List.of(
++                        InetAddresses.parseNumericAddress("fd00:976a:c305:1d::8")))
++                .setMtuV6(5678)
++                .setPduSessionId(1)
++                .setQosBearerSessions(new ArrayList<>())
++                .setTrafficDescriptors(Collections.emptyList())
++                .build();
++    }
++
+     private void setFailedSetupDataResponse(DataServiceManager dsm,
+             @DataServiceCallback.ResultCode int resultCode) {
+         doAnswer(invocation -> {
+@@ -563,6 +583,66 @@ public class DataNetworkTest extends TelephonyTest {
+         verify(mDataNetworkCallback).onConnected(eq(mDataNetworkUT));
+     }
+ 
++    @Test
++    public void testLegacyImsNetworkRetainsInternetAfterDefaultIpv4Merge() throws Exception {
++        doReturn(true).when(mDataConfigManager).isLegacyImsInternetMergeEnabled();
++        doAnswer(invocation -> {
++            Message msg = (Message) invocation.getArguments()[10];
++            msg.getData().putParcelable("data_call_response", createIpv6OnlyDataCallResponse(123));
++            msg.arg1 = DataServiceCallback.RESULT_SUCCESS;
++            msg.sendToTarget();
++            return null;
++        }).when(mMockedWwanDataServiceManager).setupDataCall(anyInt(), any(DataProfile.class),
++                anyBoolean(), anyBoolean(), anyInt(), any(), anyInt(), any(), any(), anyBoolean(),
++                any(Message.class));
++
++        NetworkRequestList networkRequestList = new NetworkRequestList();
++        networkRequestList.add(new TelephonyNetworkRequest(new NetworkRequest.Builder()
++                .addCapability(NetworkCapabilities.NET_CAPABILITY_IMS)
++                .build(), mPhone, mFeatureFlags));
++        mDataNetworkUT = new DataNetwork(mPhone, mFeatureFlags, Looper.myLooper(),
++                mDataServiceManagers, mImsDataProfile, networkRequestList,
++                AccessNetworkConstants.TRANSPORT_TYPE_WWAN, DataAllowedReason.NORMAL,
++                mDataNetworkCallback);
++        replaceInstance(DataNetwork.class, "mDataCallSessionStats",
++                mDataNetworkUT, mDataCallSessionStats);
++        processAllMessages();
++
++        assertThat(mDataNetworkUT.getNetworkCapabilities().hasCapability(
++                NetworkCapabilities.NET_CAPABILITY_INTERNET)).isFalse();
++
++        TelephonyNetworkAgent mockNetworkAgent = Mockito.mock(TelephonyNetworkAgent.class);
++        replaceInstance(DataNetwork.class, "mNetworkAgent",
++                mDataNetworkUT, mockNetworkAgent);
++
++        DataCallResponse mergedResponse = createDataCallResponse(123,
++                DataCallResponse.LINK_STATUS_ACTIVE, Collections.emptyList(), null,
++                PreciseDataConnectionState.NETWORK_VALIDATION_UNSUPPORTED);
++        mDataNetworkUT.obtainMessage(8 /* EVENT_DATA_STATE_CHANGED */,
++                new AsyncResult(AccessNetworkConstants.TRANSPORT_TYPE_WWAN,
++                        List.of(mergedResponse), null)).sendToTarget();
++        processAllMessages();
++
++        assertThat(mDataNetworkUT.getNetworkCapabilities().hasCapability(
++                NetworkCapabilities.NET_CAPABILITY_INTERNET)).isTrue();
++        assertThat(mDataNetworkUT.getNetworkCapabilities().hasCapability(
++                NetworkCapabilities.NET_CAPABILITY_IMS)).isTrue();
++        assertThat(mDataNetworkUT.getNetworkCapabilities().hasCapability(
++                NetworkCapabilities.NET_CAPABILITY_NOT_RESTRICTED)).isTrue();
++
++        DataCallResponse imsOnlyResponse = createIpv6OnlyDataCallResponse(123);
++        mDataNetworkUT.obtainMessage(8 /* EVENT_DATA_STATE_CHANGED */,
++                new AsyncResult(AccessNetworkConstants.TRANSPORT_TYPE_WWAN,
++                        List.of(imsOnlyResponse), null)).sendToTarget();
++        processAllMessages();
++
++        assertThat(mDataNetworkUT.getNetworkCapabilities().hasCapability(
++                NetworkCapabilities.NET_CAPABILITY_INTERNET)).isTrue();
++        assertThat(mDataNetworkUT.getNetworkCapabilities().hasCapability(
++                NetworkCapabilities.NET_CAPABILITY_IMS)).isTrue();
++        verify(mockNetworkAgent, never()).abandon();
++    }
++
+     @Test
+     public void testCreateDataNetworkWhenOos() throws Exception {
+         DataSpecificRegistrationInfo dsri = new DataSpecificRegistrationInfo.Builder(8)
+-- 
+2.43.0
+

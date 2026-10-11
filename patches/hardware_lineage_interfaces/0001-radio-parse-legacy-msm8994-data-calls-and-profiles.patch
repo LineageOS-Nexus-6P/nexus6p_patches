@@ -1,0 +1,244 @@
+From c975e256877d5da34763b1e24c691d8f28dfa884 Mon Sep 17 00:00:00 2001
+From: derveror <derveror@gmail.com>
+Date: Sun, 11 Oct 2026 17:31:33 -0400
+Subject: [PATCH] radio: parse legacy msm8994 data calls and profiles
+
+Change-Id: I9d3799d2396ff0a7b2cb6e92cdc2579f1a46face
+---
+ radio/1.4/legacy/Helpers.cpp                  | 11 ++--
+ radio/1.4/legacy/LegacyDataCall.h             | 26 +++++++++
+ radio/1.4/legacy/LegacyDataProfile.h          | 55 +++++++++++++++++++
+ radio/1.4/legacy/Radio.cpp                    |  5 +-
+ radio/1.4/legacy/tests/LegacyDataCallTest.cpp | 22 ++++++++
+ .../legacy/tests/LegacyDataProfileTest.cpp    | 40 ++++++++++++++
+ 6 files changed, 151 insertions(+), 8 deletions(-)
+ create mode 100644 radio/1.4/legacy/LegacyDataCall.h
+ create mode 100644 radio/1.4/legacy/LegacyDataProfile.h
+ create mode 100644 radio/1.4/legacy/tests/LegacyDataCallTest.cpp
+ create mode 100644 radio/1.4/legacy/tests/LegacyDataProfileTest.cpp
+
+diff --git a/radio/1.4/legacy/Helpers.cpp b/radio/1.4/legacy/Helpers.cpp
+index 76c1f321fffbab7a40efa33cbf82d456c15b3de4..8f3cc52d1411bdd1edd191381a1fac087f14887f 100644
+--- a/radio/1.4/legacy/Helpers.cpp
++++ b/radio/1.4/legacy/Helpers.cpp
+@@ -5,9 +5,10 @@
+  */
+ 
+ #include "Helpers.h"
+-#include <regex>
++#include "LegacyDataCall.h"
+ #include <vector>
+ using namespace android::hardware::radio;
++using android::hardware::radio::implementation::splitLegacyDataCallFields;
+ 
+ V1_4::SignalStrength Create1_4SignalStrength(const V1_0::SignalStrength& sigStrength){
+ 
+@@ -142,13 +143,9 @@ hidl_vec<V1_4::CellInfo> Create1_4CellInfoList(const hidl_vec<V1_2::CellInfo>& c
+ }
+ 
+ hidl_vec<hidl_string> DelimitedStrToVec(std::string delimitedStr){
+-    std::regex rgx("\\s+");
+-    std::sregex_token_iterator iter(delimitedStr.begin(), delimitedStr.end(), rgx, -1);
+-    std::sregex_token_iterator end;
+-
+     std::vector<hidl_string> tokens;
+-    for ( ; iter != end; ++iter)
+-        tokens.push_back(hidl_string(*iter));
++    for (const std::string& token : splitLegacyDataCallFields(delimitedStr))
++        tokens.emplace_back(token);
+ 
+     return hidl_vec(tokens);
+ }
+diff --git a/radio/1.4/legacy/LegacyDataCall.h b/radio/1.4/legacy/LegacyDataCall.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..01b0290c1a110ad3302d314415a7b1cd88fd2290
+--- /dev/null
++++ b/radio/1.4/legacy/LegacyDataCall.h
+@@ -0,0 +1,26 @@
++/*
++ * Copyright (C) 2026 The LineageOS Project
++ *
++ * SPDX-License-Identifier: Apache-2.0
++ */
++
++#pragma once
++
++#include <sstream>
++#include <string>
++#include <vector>
++
++namespace android::hardware::radio::implementation {
++
++inline std::vector<std::string> splitLegacyDataCallFields(const std::string& fields) {
++    std::istringstream stream(fields);
++    std::vector<std::string> tokens;
++    std::string token;
++
++    while (stream >> token) {
++        tokens.push_back(token);
++    }
++    return tokens;
++}
++
++}  // namespace android::hardware::radio::implementation
+diff --git a/radio/1.4/legacy/LegacyDataProfile.h b/radio/1.4/legacy/LegacyDataProfile.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..efbd13515114c9e21621397c7a4239024b9dc513
+--- /dev/null
++++ b/radio/1.4/legacy/LegacyDataProfile.h
+@@ -0,0 +1,55 @@
++/*
++ * Copyright (C) 2026 The LineageOS Project
++ *
++ * SPDX-License-Identifier: Apache-2.0
++ */
++
++#pragma once
++
++#include <cstdint>
++
++namespace android::hardware::radio::implementation {
++
++inline int32_t inferLegacyDataProfileId(int32_t profileId, int32_t supportedApnTypesBitmap) {
++    constexpr int32_t kProfileDefault = 0;
++    constexpr int32_t kProfileTethered = 1;
++    constexpr int32_t kProfileIms = 2;
++    constexpr int32_t kProfileFota = 3;
++    constexpr int32_t kProfileCbs = 4;
++    constexpr int32_t kProfileInvalid = -1;
++
++    constexpr int32_t kApnTypeDefault = 1 << 0;
++    constexpr int32_t kApnTypeDun = 1 << 3;
++    constexpr int32_t kApnTypeFota = 1 << 5;
++    constexpr int32_t kApnTypeIms = 1 << 6;
++    constexpr int32_t kApnTypeCbs = 1 << 7;
++
++    if (profileId != kProfileInvalid) {
++        return profileId;
++    }
++
++    // Radio HAL 1.4 uses INVALID for APNs which are not modem-persistent. A
++    // pre-v15 vendor RIL receives only the legacy seven setup-data-call
++    // strings, so the APN type bitmap is lost at that boundary. Recover the
++    // standardized legacy profile ID before forwarding the request; otherwise
++    // every APN is presented to old QCRIL as the same profile (-1), preventing
++    // concurrent default and IMS contexts on affected devices.
++    if ((supportedApnTypesBitmap & kApnTypeDefault) != 0) {
++        return kProfileDefault;
++    }
++    if ((supportedApnTypesBitmap & kApnTypeIms) != 0) {
++        return kProfileIms;
++    }
++    if ((supportedApnTypesBitmap & kApnTypeDun) != 0) {
++        return kProfileTethered;
++    }
++    if ((supportedApnTypesBitmap & kApnTypeFota) != 0) {
++        return kProfileFota;
++    }
++    if ((supportedApnTypesBitmap & kApnTypeCbs) != 0) {
++        return kProfileCbs;
++    }
++    return kProfileDefault;
++}
++
++}  // namespace android::hardware::radio::implementation
+diff --git a/radio/1.4/legacy/Radio.cpp b/radio/1.4/legacy/Radio.cpp
+index 4af7e35a936219f8f8c3a82239008ff39b54adf1..03251d234ebd455608c4396b0358695ea30aba2e 100644
+--- a/radio/1.4/legacy/Radio.cpp
++++ b/radio/1.4/legacy/Radio.cpp
+@@ -8,6 +8,7 @@
+ 
+ #include "Radio.h"
+ #include "Helpers.h"
++#include "LegacyDataProfile.h"
+ #include <vector>
+ #include <string>
+ 
+@@ -752,7 +753,9 @@ hidl_string getProtocolStringFromInt(const V1_4::PdpProtocolType protocol){
+ 
+ V1_0::DataProfileInfo Get1_0DataProfileInfo(const V1_4::DataProfileInfo& dataProfileInfo){
+     V1_0::DataProfileInfo legacyProfile = {};
+-    legacyProfile.profileId = dataProfileInfo.profileId;
++    legacyProfile.profileId = static_cast<V1_0::DataProfileId>(inferLegacyDataProfileId(
++            static_cast<int32_t>(dataProfileInfo.profileId),
++            dataProfileInfo.supportedApnTypesBitmap));
+     legacyProfile.apn = dataProfileInfo.apn;
+     legacyProfile.protocol = getProtocolStringFromInt(dataProfileInfo.protocol);
+     legacyProfile.roamingProtocol = getProtocolStringFromInt(dataProfileInfo.roamingProtocol);
+diff --git a/radio/1.4/legacy/tests/LegacyDataCallTest.cpp b/radio/1.4/legacy/tests/LegacyDataCallTest.cpp
+new file mode 100644
+index 0000000000000000000000000000000000000000..0c77e89180b903f94ccfe6eb3fc0f742c563f2cf
+--- /dev/null
++++ b/radio/1.4/legacy/tests/LegacyDataCallTest.cpp
+@@ -0,0 +1,22 @@
++/*
++ * Copyright (C) 2026 The LineageOS Project
++ *
++ * SPDX-License-Identifier: Apache-2.0
++ */
++
++#include "../LegacyDataCall.h"
++
++#include <cassert>
++
++using android::hardware::radio::implementation::splitLegacyDataCallFields;
++
++int main() {
++    assert(splitLegacyDataCallFields("").empty());
++    assert(splitLegacyDataCallFields("   \t\n").empty());
++
++    const auto addresses = splitLegacyDataCallFields("10.0.0.2/32  2001:db8::1/64");
++    assert(addresses.size() == 2);
++    assert(addresses[0] == "10.0.0.2/32");
++    assert(addresses[1] == "2001:db8::1/64");
++    return 0;
++}
+diff --git a/radio/1.4/legacy/tests/LegacyDataProfileTest.cpp b/radio/1.4/legacy/tests/LegacyDataProfileTest.cpp
+new file mode 100644
+index 0000000000000000000000000000000000000000..0ad3988bc222904334050dac5aae69445dca8c33
+--- /dev/null
++++ b/radio/1.4/legacy/tests/LegacyDataProfileTest.cpp
+@@ -0,0 +1,40 @@
++/*
++ * Copyright (C) 2026 The LineageOS Project
++ *
++ * SPDX-License-Identifier: Apache-2.0
++ */
++
++#include "../LegacyDataProfile.h"
++
++#include <cassert>
++#include <cstdint>
++
++using android::hardware::radio::implementation::inferLegacyDataProfileId;
++
++int main() {
++    constexpr int32_t kInvalid = -1;
++    constexpr int32_t kDefault = 0;
++    constexpr int32_t kTethered = 1;
++    constexpr int32_t kIms = 2;
++    constexpr int32_t kFota = 3;
++    constexpr int32_t kCbs = 4;
++
++    constexpr int32_t kTypeDefault = 1 << 0;
++    constexpr int32_t kTypeDun = 1 << 3;
++    constexpr int32_t kTypeFota = 1 << 5;
++    constexpr int32_t kTypeIms = 1 << 6;
++    constexpr int32_t kTypeCbs = 1 << 7;
++    constexpr int32_t kTypeIa = 1 << 8;
++
++    assert(inferLegacyDataProfileId(kInvalid, kTypeIms) == kIms);
++    assert(inferLegacyDataProfileId(kInvalid, kTypeIms | kTypeIa) == kIms);
++    assert(inferLegacyDataProfileId(kInvalid, kTypeDefault | kTypeFota) == kDefault);
++    assert(inferLegacyDataProfileId(kInvalid, kTypeDun) == kTethered);
++    assert(inferLegacyDataProfileId(kInvalid, kTypeFota) == kFota);
++    assert(inferLegacyDataProfileId(kInvalid, kTypeCbs) == kCbs);
++    assert(inferLegacyDataProfileId(kInvalid, 0) == kDefault);
++
++    // A profile explicitly supplied by the carrier must never be rewritten.
++    assert(inferLegacyDataProfileId(47, kTypeIms) == 47);
++    return 0;
++}
+-- 
+2.43.0
+

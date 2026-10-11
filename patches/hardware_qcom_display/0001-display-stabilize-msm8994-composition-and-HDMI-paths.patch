@@ -1,0 +1,272 @@
+From 6c80a342db74194e89d49c2fb7cccde6735b500c Mon Sep 17 00:00:00 2001
+From: derveror <derveror@gmail.com>
+Date: Sun, 11 Oct 2026 17:31:33 -0400
+Subject: [PATCH] display: stabilize msm8994 composition and HDMI paths
+
+---
+ Android.bp                    |  4 +++-
+ libgralloc/gpu.cpp            | 15 +++++++++------
+ libhdmi/hdmi.cpp              |  6 +++---
+ libhdmi/hdmi.h                |  2 +-
+ libhwcomposer/hwc_mdpcomp.cpp | 17 ++++++++---------
+ libhwcomposer/hwc_utils.cpp   | 18 +++++++++---------
+ libqdutils/mdp_version.cpp    |  5 ++---
+ 7 files changed, 35 insertions(+), 32 deletions(-)
+
+diff --git a/Android.bp b/Android.bp
+index 5ebacea920d888483b995f47d297597cdbc2be40..7f82f198387908e94d6a46159cc925ba60a61ee4 100644
+--- a/Android.bp
++++ b/Android.bp
+@@ -7,6 +7,8 @@ cc_defaults {
+     name: "display_defaults",
+     vendor: true,
+     cflags: [
++        "-DMDSS_TARGET",
++        "-DVENUS_COLOR_FORMAT",
+         "-Wno-missing-field-initializers",
+         "-Wno-unused-parameter",
+     ],
+@@ -43,4 +45,4 @@ cc_library_headers {
+     ],
+     header_libs: ["libhardware_headers"],
+     export_header_lib_headers: ["libhardware_headers"],
+-}
+\ No newline at end of file
++}
+diff --git a/libgralloc/gpu.cpp b/libgralloc/gpu.cpp
+index a23202cc94569fbc517373a788f9dc179244c487..32b9ad2bf0b9ce43ededca07f360c94a566d7405 100644
+--- a/libgralloc/gpu.cpp
++++ b/libgralloc/gpu.cpp
+@@ -298,15 +298,19 @@ int gpu_context_t::alloc_impl(int w, int h, int format, int usage,
+             grallocFormat = HAL_PIXEL_FORMAT_NV21_ZSL; //NV21 ZSL
+         else if(usage & GRALLOC_USAGE_HW_CAMERA_READ)
+             grallocFormat = HAL_PIXEL_FORMAT_YCrCb_420_SP; //NV21
+-        else if(usage & GRALLOC_USAGE_HW_CAMERA_WRITE)
+-            grallocFormat = HAL_PIXEL_FORMAT_YCrCb_420_SP; //NV21
+-        else if(usage & GRALLOC_USAGE_HW_COMPOSER)
++        else if(usage & GRALLOC_USAGE_HW_CAMERA_WRITE) {
++            if (format == HAL_PIXEL_FORMAT_YCbCr_420_888) {
++                grallocFormat = HAL_PIXEL_FORMAT_NV21_ZSL; //NV21
++            } else {
++                grallocFormat = HAL_PIXEL_FORMAT_YCbCr_420_SP_VENUS; //NV12 preview
++            }
++        } else if(usage & GRALLOC_USAGE_HW_COMPOSER)
+             //XXX: If we still haven't set a format, default to RGBA8888
+             grallocFormat = HAL_PIXEL_FORMAT_RGBA_8888;
+         //If no other usage flags are detected, default the
+-        //flexible YUV format to NV21.
++        //flexible YUV format to NV21_ZSL.
+         else if(format == HAL_PIXEL_FORMAT_YCbCr_420_888)
+-            grallocFormat = HAL_PIXEL_FORMAT_YCrCb_420_SP;
++            grallocFormat = HAL_PIXEL_FORMAT_NV21_ZSL;
+     }
+ 
+     getGrallocInformationFromFormat(grallocFormat, &bufferType);
+@@ -416,4 +420,3 @@ int gpu_context_t::gralloc_close(struct hw_device_t *dev)
+     }
+     return 0;
+ }
+-
+diff --git a/libhdmi/hdmi.cpp b/libhdmi/hdmi.cpp
+index 33cb42a57f5c3268795b1664941593c5c7fd9302..5558edbd4ddb98d406d8e1c71069ab0632ffb125 100644
+--- a/libhdmi/hdmi.cpp
++++ b/libhdmi/hdmi.cpp
+@@ -65,7 +65,7 @@ int HDMIDisplay::configure() {
+ 
+     // Read the system property to determine if downscale feature is enabled.
+     mMDPDownscaleEnabled = false;
+-    if(property_get("sys.hwc.mdp_downscale_enabled", value, "false")
++    if(property_get("vendor.hwc.mdp_downscale_enabled", value, "false")
+             && !strcmp(value, "true")) {
+         mMDPDownscaleEnabled = true;
+     }
+@@ -167,9 +167,9 @@ void HDMIDisplay::setActionSafeDimension(int w, int h) {
+     char actionsafeWidth[PROPERTY_VALUE_MAX];
+     char actionsafeHeight[PROPERTY_VALUE_MAX];
+     snprintf(actionsafeWidth, sizeof(actionsafeWidth), "%d", w);
+-    property_set("persist.sys.actionsafe.width", actionsafeWidth);
++    property_set("persist.vendor.hwc.actionsafe.width", actionsafeWidth);
+     snprintf(actionsafeHeight, sizeof(actionsafeHeight), "%d", h);
+-    property_set("persist.sys.actionsafe.height", actionsafeHeight);
++    property_set("persist.vendor.hwc.actionsafe.height", actionsafeHeight);
+ }
+ 
+ int HDMIDisplay::getModeCount() const {
+diff --git a/libhdmi/hdmi.h b/libhdmi/hdmi.h
+index 57f18b2d90cb4fd8dc06714a9481e7e9d1cb8a09..b8bd8fbcc05a530a60dbe551ecce4c5fa6239f12 100644
+--- a/libhdmi/hdmi.h
++++ b/libhdmi/hdmi.h
+@@ -115,7 +115,7 @@ private:
+     bool mMDPScalingMode;
+     bool mUnderscanSupported;
+     // Downscale feature switch, set via system property
+-    // sys.hwc.mdp_downscale_enabled
++    // vendor.hwc.mdp_downscale_enabled
+     bool mMDPDownscaleEnabled;
+     bool mEnableResolutionChange;
+     int mDisplayId;
+diff --git a/libhwcomposer/hwc_mdpcomp.cpp b/libhwcomposer/hwc_mdpcomp.cpp
+index 5e51df8806d061433f6f23d741908361e99defa5..87a6e849791e603f19e52fbfba9e61466ebed7c1 100644
+--- a/libhwcomposer/hwc_mdpcomp.cpp
++++ b/libhwcomposer/hwc_mdpcomp.cpp
+@@ -130,7 +130,7 @@ bool MDPComp::init(hwc_context_t *ctx) {
+ 
+     sEnabled = false;
+     if((ctx->mMDP.version >= qdutils::MDP_V4_0) &&
+-       (property_get("persist.hwc.mdpcomp.enable", property, NULL) > 0) &&
++       (property_get("persist.vendor.hwc.mdpcomp.enable", property, NULL) > 0) &&
+        (!strncmp(property, "1", PROPERTY_VALUE_MAX ) ||
+         (!strncasecmp(property,"true", PROPERTY_VALUE_MAX )))) {
+         sEnabled = true;
+@@ -146,7 +146,7 @@ bool MDPComp::init(hwc_context_t *ctx) {
+     qdutils::MDPVersion &mdpVersion = qdutils::MDPVersion::getInstance();
+ 
+     sMaxPipesPerMixer = (int)mdpVersion.getBlendStages();
+-    if(property_get("persist.hwc.mdpcomp.maxpermixer", property, "-1") > 0) {
++    if(property_get("persist.vendor.hwc.mdpcomp.maxpermixer", property, "-1") > 0) {
+         int val = atoi(property);
+         if(val >= 0)
+             sMaxPipesPerMixer = min(val, sMaxPipesPerMixer);
+@@ -156,7 +156,7 @@ bool MDPComp::init(hwc_context_t *ctx) {
+      * doesn't exist, default to 1. Using the property it can be set to 0 or
+      * more.
+      */
+-    if(property_get("persist.hwc.maxseclayers", property, "1") > 0) {
++    if(property_get("persist.vendor.hwc.maxseclayers", property, "1") > 0) {
+         int val = atoi(property);
+         sMaxSecLayers = (val >= 0) ? val : 1;
+         sMaxSecLayers = min(sMaxSecLayers, sMaxPipesPerMixer);
+@@ -172,16 +172,16 @@ bool MDPComp::init(hwc_context_t *ctx) {
+ 
+     if(!qdutils::MDPVersion::getInstance().isSrcSplit() &&
+         !qdutils::MDPVersion::getInstance().isRotDownscaleEnabled() &&
+-            property_get("persist.mdpcomp.4k2kSplit", property, "0") > 0 &&
++            property_get("persist.vendor.mdpcomp.4k2kSplit", property, "0") > 0 &&
+             (!strncmp(property, "1", PROPERTY_VALUE_MAX) ||
+             !strncasecmp(property,"true", PROPERTY_VALUE_MAX))) {
+         sEnableYUVsplit = true;
+     }
+ 
+     bool defaultPTOR = false;
+-    //Enable PTOR when "persist.hwc.ptor.enable" is not defined for
++    //Enable PTOR when "persist.vendor.hwc.ptor.enable" is not defined for
+     //8x16 and 8x39 targets by default
+-    if((property_get("persist.hwc.ptor.enable", property, NULL) <= 0) &&
++    if((property_get("persist.vendor.hwc.ptor.enable", property, NULL) <= 0) &&
+             (qdutils::MDPVersion::getInstance().is8x16() ||
+                 qdutils::MDPVersion::getInstance().is8x39())) {
+         defaultPTOR = true;
+@@ -193,7 +193,7 @@ bool MDPComp::init(hwc_context_t *ctx) {
+                                                     HWC_DISPLAY_PRIMARY);
+     }
+ 
+-    if((property_get("persist.mdp3.partialUpdate", property, NULL) <= 0) &&
++    if((property_get("persist.vendor.mdp3.partialUpdate", property, NULL) <= 0) &&
+           (ctx->mMDP.version == qdutils::MDP_V3_0_5)) {
+        enablePartialUpdateForMDP3 = true;
+     }
+@@ -206,7 +206,7 @@ bool MDPComp::init(hwc_context_t *ctx) {
+ 
+     sIsPartialUpdateActive = getPartialUpdatePref(ctx);
+ 
+-    if(property_get("persist.mdpcomp_perfhint", property, "-1") > 0) {
++    if(property_get("persist.vendor.mdpcomp_perfhint", property, "-1") > 0) {
+         int val = atoi(property);
+         if(val > 0 && loadPerfLib()) {
+             sPerfHintWindow = val;
+@@ -3253,4 +3253,3 @@ void MDPComp::setPerfHint(hwc_context_t *ctx, hwc_display_contents_1_t* list) {
+ }
+ 
+ }; //namespace
+-
+diff --git a/libhwcomposer/hwc_utils.cpp b/libhwcomposer/hwc_utils.cpp
+index 0347694de04bbcab5addd4a5d290475e2461f5db..b425607c8c43fb69e7c9f9b6c5a7db2618bb08a2 100644
+--- a/libhwcomposer/hwc_utils.cpp
++++ b/libhwcomposer/hwc_utils.cpp
+@@ -385,7 +385,7 @@ int initContext(hwc_context_t *ctx)
+     ctx->deviceOrientation = 0;
+     ctx->mBufferMirrorMode = false;
+ 
+-    property_get("sys.hwc.windowbox_aspect_ratio_tolerance", value, "0");
++    property_get("vendor.hwc.windowbox_aspect_ratio_tolerance", value, "0");
+     ctx->mAspectRatioToleranceLevel = (((float)atoi(value)) / 100.0f);
+ 
+     ctx->enableABC = false;
+@@ -397,13 +397,13 @@ int initContext(hwc_context_t *ctx)
+ 
+     // Read the system property to determine if windowboxing feature is enabled.
+     ctx->mWindowboxFeature = false;
+-    if(property_get("sys.hwc.windowbox_feature", value, "false")
++    if(property_get("vendor.hwc.windowbox_feature", value, "false")
+             && !strcmp(value, "true")) {
+         ctx->mWindowboxFeature = true;
+     }
+ 
+     ctx->mUseMetaDataRefreshRate = true;
+-    if(property_get("persist.metadata_dynfps.disable", value, "false")
++    if(property_get("persist.vendor.metadata_dynfps.disable", value, "false")
+             && !strcmp(value, "true")) {
+         ctx->mUseMetaDataRefreshRate = false;
+     }
+@@ -1120,15 +1120,15 @@ void setListStats(hwc_context_t *ctx,
+     }
+ 
+     if(ctx->listStats[dpy].yuvCount > 0) {
+-        if (property_get("hw.cabl.yuv", property, NULL) > 0) {
++        if (property_get("vendor.display.cabl.yuv", property, NULL) > 0) {
+             if (atoi(property) != 1) {
+-                property_set("hw.cabl.yuv", "1");
++                property_set("vendor.display.cabl.yuv", "1");
+             }
+         }
+     } else {
+-        if (property_get("hw.cabl.yuv", property, NULL) > 0) {
++        if (property_get("vendor.display.cabl.yuv", property, NULL) > 0) {
+             if (atoi(property) != 0) {
+-                property_set("hw.cabl.yuv", "0");
++                property_set("vendor.display.cabl.yuv", "0");
+             }
+         }
+     }
+@@ -1242,9 +1242,9 @@ bool isActionSafePresent(hwc_context_t *ctx, int dpy) {
+ 
+     char value[PROPERTY_VALUE_MAX];
+     // Read action safe properties
+-    property_get("persist.sys.actionsafe.width", value, "0");
++    property_get("persist.vendor.hwc.actionsafe.width", value, "0");
+     ctx->dpyAttr[dpy].mAsWidthRatio = atoi(value);
+-    property_get("persist.sys.actionsafe.height", value, "0");
++    property_get("persist.vendor.hwc.actionsafe.height", value, "0");
+     ctx->dpyAttr[dpy].mAsHeightRatio = atoi(value);
+ 
+     if(!ctx->dpyAttr[dpy].mAsWidthRatio && !ctx->dpyAttr[dpy].mAsHeightRatio) {
+diff --git a/libqdutils/mdp_version.cpp b/libqdutils/mdp_version.cpp
+index 0e21fa672610f46195c275148362c500539aea2f..1c92879f57eabafa7fd450a16f0cf4e50e3050c1 100644
+--- a/libqdutils/mdp_version.cpp
++++ b/libqdutils/mdp_version.cpp
+@@ -252,7 +252,7 @@ void  MDPVersion::updatePanelInfo() {
+                 }
+             }
+         }
+-        if((property_get("persist.hwc.pubypass", property, 0) > 0) &&
++        if((property_get("persist.vendor.hwc.pubypass", property, 0) > 0) &&
+             (!strncmp(property, "1", PROPERTY_VALUE_MAX ) ||
+             (!strncasecmp(property,"true", PROPERTY_VALUE_MAX )))) {
+                 mPanelInfo.mPartialUpdateEnable = 0;
+@@ -279,7 +279,7 @@ bool MDPVersion::updateSysFsInfo() {
+     char property[PROPERTY_VALUE_MAX];
+     bool enableMacroTile = false;
+ 
+-    if((property_get("persist.hwc.macro_tile_enable", property, NULL) > 0) &&
++    if((property_get("persist.vendor.hwc.macro_tile_enable", property, NULL) > 0) &&
+        (!strncmp(property, "1", PROPERTY_VALUE_MAX ) ||
+         (!strncasecmp(property,"true", PROPERTY_VALUE_MAX )))) {
+         enableMacroTile = true;
+@@ -518,4 +518,3 @@ bool MDPVersion::is8992() {
+ }
+ 
+ }; //namespace qdutils
+-
+-- 
+2.43.0
+

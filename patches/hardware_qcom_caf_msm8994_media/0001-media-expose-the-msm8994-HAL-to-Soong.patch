@@ -1,0 +1,25 @@
+From c59a421c18716a462e62fdcf6d195b3d62b27b3c Mon Sep 17 00:00:00 2001
+From: derveror <derveror@gmail.com>
+Date: Sun, 11 Oct 2026 17:31:33 -0400
+Subject: [PATCH] media: expose the msm8994 HAL to Soong
+
+---
+ Android.bp | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/Android.bp b/Android.bp
+index 399e5283239b9481a4ba2bdb31f727d013c53534..448a8d65b7f8cfe1a6c6bdacc5202f2ab597369c 100644
+--- a/Android.bp
++++ b/Android.bp
+@@ -1,5 +1,5 @@
+ soong_namespace {
+     imports: [
+-        "hardware/qcom-caf/msm8994/display"
++        "hardware/qcom/display",
+     ],
+-}
+\ No newline at end of file
++}
+-- 
+2.43.0
+

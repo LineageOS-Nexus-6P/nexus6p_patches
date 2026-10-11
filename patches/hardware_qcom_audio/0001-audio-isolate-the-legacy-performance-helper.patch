@@ -1,0 +1,55 @@
+From 19c3dbf9b2c9839e3d57d8b83485a1db2a2e339d Mon Sep 17 00:00:00 2001
+From: derveror <derveror@gmail.com>
+Date: Sun, 11 Oct 2026 17:31:33 -0400
+Subject: [PATCH] audio: isolate the legacy performance helper
+
+Change-Id: Ie63a2d3afd3f0ae759692666265d7342c358043d
+---
+ hal/Android.bp     | 6 ++++++
+ hal/audio_perf.cpp | 5 ++++-
+ 2 files changed, 10 insertions(+), 1 deletion(-)
+
+diff --git a/hal/Android.bp b/hal/Android.bp
+index d969b1865565e6f5611aa1983f16eee4838bebb1..59d57bff3ffb94169c6a5d70cc8556a1b5ceb2a4 100644
+--- a/hal/Android.bp
++++ b/hal/Android.bp
+@@ -39,6 +39,9 @@ target_board_platform_cc_library_shared {
+     }) + select(soong_config_variable("qtiaudio", "feature_cirrus_spkr_protection"), {
+         "true": ["audio_extn/cirrus_playback.c"],
+         default: [],
++    }) + select(soong_config_variable("qtiaudio", "feature_dsm_feedback"), {
++        "true": ["audio_extn/dsm_feedback.c"],
++        default: [],
+     }) + select(soong_config_variable("qtiaudio", "feature_hwdep_cal"), {
+         "true": ["audio_extn/hwdep_cal.c"],
+         default: [],
+@@ -72,6 +75,9 @@ target_board_platform_cc_library_shared {
+     }) + select(soong_config_variable("qtiaudio", "feature_cirrus_spkr_protection"), {
+         "true": ["-DSPKR_PROT_ENABLED"],
+         default: [],
++    }) + select(soong_config_variable("qtiaudio", "feature_dsm_feedback"), {
++        "true": ["-DDSM_FEEDBACK_ENABLED"],
++        default: [],
+     }) + select(soong_config_variable("qtiaudio", "feature_flicker_sensor_input"), {
+         "true": ["-DFLICKER_SENSOR_INPUT"],
+         default: [],
+diff --git a/hal/audio_perf.cpp b/hal/audio_perf.cpp
+index d1270093036ae50c47ea008c1b1abe20a9bd0c6e..47af37f97a46783e560939408cd4805a59709c8c 100644
+--- a/hal/audio_perf.cpp
++++ b/hal/audio_perf.cpp
+@@ -72,8 +72,11 @@ static hal_version connectPowerHalLocked() {
+     if (gPowerHalAidlExists) {
+         // (re)connect if handle is null
+         if (!gPowerHal_Aidl_) {
++            // On non-Treble devices the audio HAL can run on the vendor binder
++            // while the AIDL Power HAL is published on the system binder. Never
++            // block the real-time audio path waiting for an unreachable service.
+             ndk::SpAIBinder pwBinder = ndk::SpAIBinder(
+-                AServiceManager_getService(kInstance.c_str()));
++                AServiceManager_checkService(kInstance.c_str()));
+             gPowerHal_Aidl_ = aidl::android::hardware::power::IPower::fromBinder(pwBinder);
+         }
+         if (gPowerHal_Aidl_) {
+-- 
+2.43.0
+

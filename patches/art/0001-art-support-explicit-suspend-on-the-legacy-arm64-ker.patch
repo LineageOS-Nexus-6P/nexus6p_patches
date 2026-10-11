@@ -1,0 +1,61 @@
+From 0eef5ad8f69dd5ce8da72251e3ee99939842b711 Mon Sep 17 00:00:00 2001
+From: derveror <derveror@gmail.com>
+Date: Sun, 11 Oct 2026 17:31:33 -0400
+Subject: [PATCH] art: support explicit suspend on the legacy arm64 kernel
+
+Change-Id: I886188c081ab0ce1609242891b3ce9037f8c9c5d
+---
+ dex2oat/dex2oat.cc | 4 +++-
+ runtime/oat/oat.h  | 4 ++--
+ runtime/runtime.cc | 5 ++++-
+ 3 files changed, 9 insertions(+), 4 deletions(-)
+
+diff --git a/dex2oat/dex2oat.cc b/dex2oat/dex2oat.cc
+index a8d3d9346c38421d8d475010d1e7b35775f25509..4d2bf56c7c21e5c44db9b9861cbb1d0a7a18f2b2 100644
+--- a/dex2oat/dex2oat.cc
++++ b/dex2oat/dex2oat.cc
+@@ -862,7 +862,9 @@ class Dex2Oat final {
+     // Set the compilation target's implicit checks options.
+     switch (compiler_options_->GetInstructionSet()) {
+       case InstructionSet::kArm64:
+-        compiler_options_->implicit_suspend_checks_ = true;
++        // Match the runtime's explicit suspend checks. Existing OAT files are
++        // invalidated by the version bump below.
++        compiler_options_->implicit_suspend_checks_ = false;
+         FALLTHROUGH_INTENDED;
+       case InstructionSet::kArm:
+       case InstructionSet::kThumb2:
+diff --git a/runtime/oat/oat.h b/runtime/oat/oat.h
+index 2b5c21e12922352da23b04195963ca04b2942a80..1eb87391b1730c6d49bc1d03046e3859c74599a6 100644
+--- a/runtime/oat/oat.h
++++ b/runtime/oat/oat.h
+@@ -44,8 +44,8 @@ std::ostream& operator<<(std::ostream& stream, StubType stub_type);
+ class EXPORT PACKED(4) OatHeader {
+  public:
+   static constexpr std::array<uint8_t, 4> kOatMagic { { 'o', 'a', 't', '\n' } };
+-  // Last oat version changed reason: reland "arm64: Store resolved MethodType-s in .bss."
+-  static constexpr std::array<uint8_t, 4> kOatVersion{{'2', '5', '4', '\0'}};
++  // Last oat version changed reason: Use explicit ARM64 suspend checks on Angler.
++  static constexpr std::array<uint8_t, 4> kOatVersion{{'2', '5', '5', '\0'}};
+ 
+   static constexpr const char* kDex2OatCmdLineKey = "dex2oat-cmdline";
+   static constexpr const char* kDebuggableKey = "debuggable";
+diff --git a/runtime/runtime.cc b/runtime/runtime.cc
+index b1e71d3bb10cf91ade22927e5873ddc59b37de0c..f81d71ef9803b8ac8a2bdb09045ba1f1b339a2da 100644
+--- a/runtime/runtime.cc
++++ b/runtime/runtime.cc
+@@ -1873,7 +1873,10 @@ bool Runtime::Init(RuntimeArgumentMap&& runtime_options_in) {
+   // Change the implicit checks flags based on runtime architecture.
+   switch (kRuntimeQuickCodeISA) {
+     case InstructionSet::kArm64:
+-      implicit_suspend_checks_ = true;
++      // Angler's 3.10 kernel can strand signal-based suspend checks inside
++      // libsigchain. Use the explicit ARM64 path, as in the upstream
++      // b/291839153 workaround, so GC suspension cannot deadlock the process.
++      implicit_suspend_checks_ = false;
+       FALLTHROUGH_INTENDED;
+     case InstructionSet::kArm:
+     case InstructionSet::kThumb2:
+-- 
+2.43.0
+
