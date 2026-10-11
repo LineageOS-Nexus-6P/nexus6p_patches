@@ -1,27 +1,26 @@
-From 774cc54167931a10c0e260549daa0701a638d57d Mon Sep 17 00:00:00 2001
+From eaadc005a199b108ce438831e1763e7e3ce0da96 Mon Sep 17 00:00:00 2001
 From: derveror <derveror@gmail.com>
 Date: Sun, 11 Oct 2026 17:31:34 -0400
 Subject: [PATCH] Connectivity: add a non-eBPF path for legacy kernels
 
 Change-Id: Ie6d4df308ebf2bdb7b2c6cf90484b8df52702a36
 ---
- bpf/dns_helper/DnsBpfHelper.cpp               | 32 ++++++++++---
- bpf/dns_helper/DnsBpfHelperTest.cpp           |  6 +--
- bpf/dns_helper/include/DnsHelperPublic.h      |  3 +-
- bpf/headers/include/bpf/BpfMap.h              | 20 +++++----
- bpf/loader/NetBpfLoad.cpp                     | 13 ++++++
- bpf/netd/BpfHandler.cpp                       |  5 +++
+ bpf/dns_helper/DnsBpfHelper.cpp               |  8 ++++
+ bpf/dns_helper/include/DnsHelperPublic.h      |  5 +-
+ bpf/headers/include/bpf/BpfMap.h              |  8 +++-
+ bpf/loader/NetBpfLoad.cpp                     | 13 +++++
+ bpf/netd/BpfHandler.cpp                       |  5 ++
  .../src/android/net/BpfNetMapsUtils.java      |  8 ++++
- .../android/net/NetworkStackBpfNetMaps.java   |  6 +--
- .../libs/libnetworkstats/BpfNetworkStats.cpp  |  8 +++-
- .../server/net/NetworkStatsService.java       | 45 ++++++++++++-------
+ .../android/net/NetworkStackBpfNetMaps.java   |  4 ++
+ .../libs/libnetworkstats/BpfNetworkStats.cpp  | 20 ++++++--
+ .../server/net/NetworkStatsService.java       | 47 +++++++++++++------
  ...id_server_connectivity_ClatCoordinator.cpp |  8 ++++
- .../src/com/android/server/BpfNetMaps.java    | 33 +++++++++++++-
- .../server/net/NetworkStatsServiceTest.java   | 14 ++++++
- 13 files changed, 160 insertions(+), 41 deletions(-)
+ .../src/com/android/server/BpfNetMaps.java    | 31 +++++++++++-
+ .../server/net/NetworkStatsServiceTest.java   | 21 +++++++++
+ 12 files changed, 152 insertions(+), 26 deletions(-)
 
 diff --git a/bpf/dns_helper/DnsBpfHelper.cpp b/bpf/dns_helper/DnsBpfHelper.cpp
-index 0719ade395dd87e189ce979ce682f35e2b901553..33fa5110a10dd58be176fcb8602bf0364d9cd4d6 100644
+index 0719ade395..78088e34d9 100644
 --- a/bpf/dns_helper/DnsBpfHelper.cpp
 +++ b/bpf/dns_helper/DnsBpfHelper.cpp
 @@ -19,6 +19,7 @@
@@ -32,127 +31,79 @@ index 0719ade395dd87e189ce979ce682f35e2b901553..33fa5110a10dd58be176fcb8602bf036
  #include <android-modules-utils/sdk_level.h>
  
  namespace android {
-@@ -38,22 +39,39 @@ base::Result<void> DnsBpfHelper::init() {
+@@ -38,6 +39,8 @@ base::Result<void> DnsBpfHelper::init() {
      return base::Error(EOPNOTSUPP);
    }
  
--  RETURN_IF_RESULT_NOT_OK(mConfigurationMap.init(CONFIGURATION_MAP_PATH));
--  RETURN_IF_RESULT_NOT_OK(mUidOwnerMap.init(UID_OWNER_MAP_PATH));
--  RETURN_IF_RESULT_NOT_OK(mDataSaverEnabledMap.init(DATA_SAVER_ENABLED_MAP_PATH));
 +  if (!android::base::GetBoolProperty("ro.kernel.ebpf.supported", true)) return {};
 +
-+  auto configurationResult = mConfigurationMap.init(CONFIGURATION_MAP_PATH);
-+  if (!configurationResult.ok()) {
-+    LOG(WARNING) << __func__ << ": Configuration BPF map is unavailable: "
-+                 << strerror(configurationResult.error().code());
-+  }
-+
-+  auto uidOwnerResult = mUidOwnerMap.init(UID_OWNER_MAP_PATH);
-+  if (!uidOwnerResult.ok()) {
-+    LOG(WARNING) << __func__ << ": UID owner BPF map is unavailable: "
-+                 << strerror(uidOwnerResult.error().code());
-+  }
-+
-+  auto dataSaverResult = mDataSaverEnabledMap.init(DATA_SAVER_ENABLED_MAP_PATH);
-+  if (!dataSaverResult.ok()) {
-+    LOG(WARNING) << __func__ << ": Data saver BPF map is unavailable: "
-+                 << strerror(dataSaverResult.error().code());
-+  }
-+
-   return {};
- }
- 
+   RETURN_IF_RESULT_NOT_OK(mConfigurationMap.init(CONFIGURATION_MAP_PATH));
+   RETURN_IF_RESULT_NOT_OK(mUidOwnerMap.init(UID_OWNER_MAP_PATH));
+   RETURN_IF_RESULT_NOT_OK(mDataSaverEnabledMap.init(DATA_SAVER_ENABLED_MAP_PATH));
+@@ -47,12 +50,17 @@ base::Result<void> DnsBpfHelper::init() {
  base::Result<bool> DnsBpfHelper::isUidNetworkingBlocked(uid_t uid, bool metered) {
    if (is_system_uid(uid)) return false;
    if (!mConfigurationMap.isValid() || !mUidOwnerMap.isValid()) {
--    LOG(ERROR) << __func__
--               << ": BPF maps are not ready. Forgot to call ADnsHelper_init?";
--    return base::Error(EUNATCH);
-+    return false;
++    if (!android::base::GetBoolProperty("ro.kernel.ebpf.supported", true)) return false;
+     LOG(ERROR) << __func__
+                << ": BPF maps are not ready. Forgot to call ADnsHelper_init?";
+     return base::Error(EUNATCH);
    }
  
    auto enabledRules = mConfigurationMap.readValue(UID_RULES_CONFIGURATION_KEY);
--  RETURN_IF_RESULT_NOT_OK(enabledRules);
-+  if (!enabledRules.ok()) {
++  if (!enabledRules.ok() &&
++      !android::base::GetBoolProperty("ro.kernel.ebpf.supported", true)) {
 +    return false;
 +  }
+   RETURN_IF_RESULT_NOT_OK(enabledRules);
  
    auto value = mUidOwnerMap.readValue(uid);
-   uint32_t uidRules = value.ok() ? value.value().rule : 0;
-diff --git a/bpf/dns_helper/DnsBpfHelperTest.cpp b/bpf/dns_helper/DnsBpfHelperTest.cpp
-index 18a5df4bf47054f222703e21df774bf1e2229f60..0e12456a43692621873b1638de665f48ad470b6e 100644
---- a/bpf/dns_helper/DnsBpfHelperTest.cpp
-+++ b/bpf/dns_helper/DnsBpfHelperTest.cpp
-@@ -132,12 +132,12 @@ TEST_F(DnsBpfHelperTest, IsUidNetworkingBlocked) {
-   }
- }
- 
--TEST_F(DnsBpfHelperTest, IsUidNetworkingBlocked_uninitialized) {
-+TEST_F(DnsBpfHelperTest, IsUidNetworkingBlocked_uninitializedAllowsTraffic) {
-   ResetAllMaps();
- 
-   auto result = mDnsBpfHelper.isUidNetworkingBlocked(AID_APP_START, /*metered=*/false);
--  EXPECT_FALSE(result.ok());
--  EXPECT_EQ(EUNATCH, result.error().code());
-+  EXPECT_TRUE(result.ok());
-+  EXPECT_FALSE(result.value());
- 
-   result = mDnsBpfHelper.isUidNetworkingBlocked(AID_SYSTEM, /*metered=*/false);
-   EXPECT_TRUE(result.ok());
 diff --git a/bpf/dns_helper/include/DnsHelperPublic.h b/bpf/dns_helper/include/DnsHelperPublic.h
-index 44b00128d934777ac0e9a6de05ab3b22188c686f..4247c03ae006bf208e7e80291ac196d91ccd9097 100644
+index 44b00128d9..e6eab1990d 100644
 --- a/bpf/dns_helper/include/DnsHelperPublic.h
 +++ b/bpf/dns_helper/include/DnsHelperPublic.h
-@@ -37,7 +37,8 @@ int ADnsHelper_init();
+@@ -37,8 +37,9 @@ int ADnsHelper_init();
   * |uid| is a Linux/Android UID to be queried. It is a combination of UserID and AppID.
   * |metered| indicates whether the uid is currently using a billing network.
   *
 - * Returns 0(false)/1(true) on success, -EUNATCH when the ADnsHelper_init is not called before
-+ * Returns 0(false)/1(true). Missing BPF maps are treated as unblocked networking so DNS remains
-+ * available on kernels without eBPF support.
-  * calling this function. Returns a negative POSIX error code (see errno.h) on other failures
+- * calling this function. Returns a negative POSIX error code (see errno.h) on other failures
++ * Returns 0(false)/1(true) on success. Missing BPF maps are treated as unblocked networking only
++ * when ro.kernel.ebpf.supported=false. Returns -EUNATCH when the helper is uninitialized on an
++ * eBPF-capable device, or another negative POSIX error code (see errno.h) on other failures
   * that return from bpf syscall.
   */
+ int ADnsHelper_isUidNetworkingBlocked(uid_t uid, bool metered);
 diff --git a/bpf/headers/include/bpf/BpfMap.h b/bpf/headers/include/bpf/BpfMap.h
-index 1037bebf297cb3fdd6540c040faab7e1d775de84..296e3d24ce3939cc27dac2086f4ce7f539e40477 100644
+index 1037bebf29..9ae7137b2a 100644
 --- a/bpf/headers/include/bpf/BpfMap.h
 +++ b/bpf/headers/include/bpf/BpfMap.h
-@@ -60,21 +60,25 @@ class BpfMapRO {
+@@ -72,8 +72,11 @@ class BpfMapRO {
+     }
  
-   protected:
-     void abortOnMismatch(bool writable) const {
--        if (!mMapFd.ok()) abort();
-+        (void) writable;
-+    }
+   public:
+-    explicit BpfMapRO<Key, Value>(const char* pathname) {
++    bool isOk() const { return mMapFd.ok(); }
 +
-+  public:
-+    bool isOk(bool writable = false) const {
-+        if (!mMapFd.ok()) return false;
-         if (isAtLeastKernelVersion(4, 14, 0)) {
-             int flags = bpfGetFdMapFlags(mMapFd);
--            if (flags < 0) abort();
--            if (flags & BPF_F_WRONLY) abort();
--            if (writable && (flags & BPF_F_RDONLY)) abort();
--            if (bpfGetFdKeySize(mMapFd) != sizeof(Key)) abort();
--            if (bpfGetFdValueSize(mMapFd) != sizeof(Value)) abort();
-+            if (flags < 0) return false;
-+            if (flags & BPF_F_WRONLY) return false;
-+            if (writable && (flags & BPF_F_RDONLY)) return false;
-+            if (bpfGetFdKeySize(mMapFd) != sizeof(Key)) return false;
-+            if (bpfGetFdValueSize(mMapFd) != sizeof(Value)) return false;
-         }
-+        return true;
-     }
- 
--  public:
-     explicit BpfMapRO<Key, Value>(const char* pathname) {
++    explicit BpfMapRO<Key, Value>(const char* pathname, bool allowMissing = false) {
          mMapFd.reset(mapRetrieveRO(pathname));
--        abortOnMismatch(/* writable */ false);
++        if (allowMissing && !mMapFd.ok()) return;
+         abortOnMismatch(/* writable */ false);
      }
  
-     Result<Key> getFirstKey() const {
+@@ -233,8 +236,9 @@ class BpfMap : public BpfMapRO<Key, Value> {
+ 
+     BpfMap<Key, Value>() {};
+ 
+-    explicit BpfMap<Key, Value>(const char* pathname) {
++    explicit BpfMap<Key, Value>(const char* pathname, bool allowMissing = false) {
+         mMapFd.reset(mapRetrieveRW(pathname));
++        if (allowMissing && !mMapFd.ok()) return;
+         abortOnMismatch(/* writable */ true);
+     }
+ 
 diff --git a/bpf/loader/NetBpfLoad.cpp b/bpf/loader/NetBpfLoad.cpp
-index 48ca600ff4f75344fa045d565a9ba13ce4659ad4..4313741109b1a6677cf6bc95f45bb6e726cc88da 100644
+index 48ca600ff4..4313741109 100644
 --- a/bpf/loader/NetBpfLoad.cpp
 +++ b/bpf/loader/NetBpfLoad.cpp
 @@ -63,6 +63,7 @@
@@ -183,7 +134,7 @@ index 48ca600ff4f75344fa045d565a9ba13ce4659ad4..4313741109b1a6677cf6bc95f45bb6e7
  
      if (!isAtLeastT) {
 diff --git a/bpf/netd/BpfHandler.cpp b/bpf/netd/BpfHandler.cpp
-index 12114e0332933cd3f3b278f81ba88766e8ca8f14..349e1f62f9df8e2c6b7074d986f5c872dc6179e6 100644
+index 12114e0332..349e1f62f9 100644
 --- a/bpf/netd/BpfHandler.cpp
 +++ b/bpf/netd/BpfHandler.cpp
 @@ -231,6 +231,11 @@ static inline void waitForBpf() {
@@ -199,7 +150,7 @@ index 12114e0332933cd3f3b278f81ba88766e8ca8f14..349e1f62f9df8e2c6b7074d986f5c872
      // *after* the synchronous 'exec_start bpfloader' which calls NetBpfLoad)
      // but checking for U QPR3 is hard.
 diff --git a/framework/src/android/net/BpfNetMapsUtils.java b/framework/src/android/net/BpfNetMapsUtils.java
-index 1760fa7ec281189402d67a8e23d5ec5c1a5aa17e..19b9923dbead036d5270b33557e98b7dd609efaf 100644
+index 1760fa7ec2..19b9923dbe 100644
 --- a/framework/src/android/net/BpfNetMapsUtils.java
 +++ b/framework/src/android/net/BpfNetMapsUtils.java
 @@ -213,6 +213,8 @@ public class BpfNetMapsUtils {
@@ -239,44 +190,68 @@ index 1760fa7ec281189402d67a8e23d5ec5c1a5aa17e..19b9923dbead036d5270b33557e98b7d
              return dataSaverEnabledMap.getValue(DATA_SAVER_ENABLED_KEY).val == DATA_SAVER_ENABLED;
          } catch (ErrnoException e) {
 diff --git a/framework/src/android/net/NetworkStackBpfNetMaps.java b/framework/src/android/net/NetworkStackBpfNetMaps.java
-index b7c4e34fad35b95b7818c351bd579e92e40511cf..750490ad24fa6ff0d272ac0230bbd2107a711b02 100644
+index b7c4e34fad..b14f478484 100644
 --- a/framework/src/android/net/NetworkStackBpfNetMaps.java
 +++ b/framework/src/android/net/NetworkStackBpfNetMaps.java
-@@ -97,7 +97,7 @@ public class NetworkStackBpfNetMaps {
+@@ -24,6 +24,7 @@ import android.annotation.NonNull;
+ import android.annotation.RequiresApi;
+ import android.os.Build;
+ import android.os.ServiceSpecificException;
++import android.os.SystemProperties;
+ import android.system.ErrnoException;
+ 
+ import com.android.internal.annotations.VisibleForTesting;
+@@ -97,6 +98,7 @@ public class NetworkStackBpfNetMaps {
                  return new BpfMap<>(CONFIGURATION_MAP_PATH, BpfMap.BPF_F_RDONLY,
                          S32.class, U32.class);
              } catch (ErrnoException e) {
--                throw new IllegalStateException("Cannot open configuration map", e);
-+                return null;
++                if (!SystemProperties.getBoolean("ro.kernel.ebpf.supported", true)) return null;
+                 throw new IllegalStateException("Cannot open configuration map", e);
              }
          }
- 
-@@ -107,7 +107,7 @@ public class NetworkStackBpfNetMaps {
+@@ -107,6 +109,7 @@ public class NetworkStackBpfNetMaps {
                  return new BpfMap<>(UID_OWNER_MAP_PATH, BpfMap.BPF_F_RDONLY,
                          S32.class, UidOwnerValue.class);
              } catch (ErrnoException e) {
--                throw new IllegalStateException("Cannot open uid owner map", e);
-+                return null;
++                if (!SystemProperties.getBoolean("ro.kernel.ebpf.supported", true)) return null;
+                 throw new IllegalStateException("Cannot open uid owner map", e);
              }
          }
- 
-@@ -117,7 +117,7 @@ public class NetworkStackBpfNetMaps {
+@@ -117,6 +120,7 @@ public class NetworkStackBpfNetMaps {
                  return new BpfMap<>(DATA_SAVER_ENABLED_MAP_PATH, BpfMap.BPF_F_RDONLY, S32.class,
                          U8.class);
              } catch (ErrnoException e) {
--                throw new IllegalStateException("Cannot open data saver enabled map", e);
-+                return null;
++                if (!SystemProperties.getBoolean("ro.kernel.ebpf.supported", true)) return null;
+                 throw new IllegalStateException("Cannot open data saver enabled map", e);
              }
          }
-     }
 diff --git a/service-t/native/libs/libnetworkstats/BpfNetworkStats.cpp b/service-t/native/libs/libnetworkstats/BpfNetworkStats.cpp
-index d3e331ec813f6572a5dfc0338c63b5b18c103d10..20bceb56067320c6d10cbd826f7214b5e1568671 100644
+index d3e331ec81..203d23e25d 100644
 --- a/service-t/native/libs/libnetworkstats/BpfNetworkStats.cpp
 +++ b/service-t/native/libs/libnetworkstats/BpfNetworkStats.cpp
-@@ -195,6 +195,10 @@ int parseBpfNetworkStatsDetail(std::vector<stats_line>* lines) {
-     static BpfMapRO<uint32_t, uint32_t> configurationMap(CONFIGURATION_MAP_PATH);
-     static BpfMap<StatsKey, StatsValue> statsMapA(STATS_MAP_A_PATH);
-     static BpfMap<StatsKey, StatsValue> statsMapB(STATS_MAP_B_PATH);
+@@ -46,7 +46,8 @@ BpfMap<uint32_t, IfaceValue>& getIfaceIndexNameMap() {
+ }
+ 
+ const BpfMapRO<uint32_t, StatsValue>& getIfaceStatsMap() {
+-    static BpfMapRO<uint32_t, StatsValue> ifaceStatsMap(IFACE_STATS_MAP_PATH);
++    static BpfMapRO<uint32_t, StatsValue> ifaceStatsMap(
++            IFACE_STATS_MAP_PATH, /* allowMissing */ true);
+     return ifaceStatsMap;
+ }
+ 
+@@ -192,9 +193,16 @@ int parseBpfNetworkStatsDetailInternal(std::vector<stats_line>& lines,
+ }
+ 
+ int parseBpfNetworkStatsDetail(std::vector<stats_line>* lines) {
+-    static BpfMapRO<uint32_t, uint32_t> configurationMap(CONFIGURATION_MAP_PATH);
+-    static BpfMap<StatsKey, StatsValue> statsMapA(STATS_MAP_A_PATH);
+-    static BpfMap<StatsKey, StatsValue> statsMapB(STATS_MAP_B_PATH);
++    static BpfMapRO<uint32_t, uint32_t> configurationMap(
++            CONFIGURATION_MAP_PATH, /* allowMissing */ true);
++    static BpfMap<StatsKey, StatsValue> statsMapA(
++            STATS_MAP_A_PATH, /* allowMissing */ true);
++    static BpfMap<StatsKey, StatsValue> statsMapB(
++            STATS_MAP_B_PATH, /* allowMissing */ true);
 +    // BPF-less legacy kernels intentionally have no maps.  NetworkStatsService
 +    // already treats this mode as empty accounting data, so do not turn the
 +    // expected fallback into a recurring exception and log storm.
@@ -284,7 +259,7 @@ index d3e331ec813f6572a5dfc0338c63b5b18c103d10..20bceb56067320c6d10cbd826f7214b5
      auto configuration = configurationMap.readValue(CURRENT_STATS_MAP_CONFIGURATION_KEY);
      if (!configuration.ok()) {
          ALOGE("Cannot read the old configuration from map: %s",
-@@ -268,7 +272,9 @@ int parseBpfNetworkStatsDevInternal(std::vector<stats_line>& lines,
+@@ -268,7 +276,9 @@ int parseBpfNetworkStatsDevInternal(std::vector<stats_line>& lines,
  }
  
  int parseBpfNetworkStatsDev(std::vector<stats_line>* lines) {
@@ -296,7 +271,7 @@ index d3e331ec813f6572a5dfc0338c63b5b18c103d10..20bceb56067320c6d10cbd826f7214b5
  
  void groupNetworkStats(std::vector<stats_line>& lines) {
 diff --git a/service-t/src/com/android/server/net/NetworkStatsService.java b/service-t/src/com/android/server/net/NetworkStatsService.java
-index fb712a18ec4b42571aea03dd17666e1a75ddcfdc..7e5548649f013002426d527e3abb587152a6df31 100644
+index fb712a18ec..6ab3ac06b4 100644
 --- a/service-t/src/com/android/server/net/NetworkStatsService.java
 +++ b/service-t/src/com/android/server/net/NetworkStatsService.java
 @@ -146,6 +146,7 @@ import android.os.PowerManager;
@@ -326,7 +301,7 @@ index fb712a18ec4b42571aea03dd17666e1a75ddcfdc..7e5548649f013002426d527e3abb5871
  
      /** Data layer operation counters for splicing into other structures. */
      private NetworkStats mUidOperations = new NetworkStats(0L, 10);
-@@ -682,12 +683,18 @@ public class NetworkStatsService extends INetworkStatsService.Stub {
+@@ -682,12 +683,14 @@ public class NetworkStatsService extends INetworkStatsService.Stub {
                  mNetworkStatsSubscriptionsMonitor);
          mLocationPermissionChecker = mDeps.makeLocationPermissionChecker(mContext);
          mInterfaceMapHelper = mDeps.makeBpfInterfaceMapHelper();
@@ -336,22 +311,18 @@ index fb712a18ec4b42571aea03dd17666e1a75ddcfdc..7e5548649f013002426d527e3abb5871
 -        mStatsMapB = mDeps.getStatsMapB();
 -        mAppUidStatsMap = mDeps.getAppUidStatsMap();
 -        mIfaceStatsMap = mDeps.getIfaceStatsMap();
-+        if (SystemProperties.getBoolean("ro.kernel.ebpf.supported", true)) {
-+            try {
-+                mUidCounterSetMap = mDeps.getUidCounterSetMap();
-+                mCookieTagMap = mDeps.getCookieTagMap();
-+                mStatsMapA = mDeps.getStatsMapA();
-+                mStatsMapB = mDeps.getStatsMapB();
-+                mAppUidStatsMap = mDeps.getAppUidStatsMap();
-+                mIfaceStatsMap = mDeps.getIfaceStatsMap();
-+            } catch (Throwable t) {
-+                Log.e(TAG, "BPF maps unavailable; continuing without eBPF", t);
-+            }
++        if (mDeps.isBpfSupported()) {
++            mUidCounterSetMap = mDeps.getUidCounterSetMap();
++            mCookieTagMap = mDeps.getCookieTagMap();
++            mStatsMapA = mDeps.getStatsMapA();
++            mStatsMapB = mDeps.getStatsMapB();
++            mAppUidStatsMap = mDeps.getAppUidStatsMap();
++            mIfaceStatsMap = mDeps.getIfaceStatsMap();
 +        }
          // To prevent any possible races, the flag is not allowed to change until rebooting.
          mSupportEventLogger = mDeps.supportEventLogger(mContext);
          if (mSupportEventLogger) {
-@@ -730,8 +737,12 @@ public class NetworkStatsService extends INetworkStatsService.Stub {
+@@ -730,8 +733,12 @@ public class NetworkStatsService extends INetworkStatsService.Stub {
          // on the experiment flag, BpfNetMaps starts C SkDestroyListener (existing code) or
          // NetworkStatsService starts Java SkDestroyListener (new code).
          final BpfNetMaps bpfNetMaps = mDeps.makeBpfNetMaps(mContext);
@@ -366,7 +337,19 @@ index fb712a18ec4b42571aea03dd17666e1a75ddcfdc..7e5548649f013002426d527e3abb5871
      }
  
      /**
-@@ -2039,7 +2050,6 @@ public class NetworkStatsService extends INetworkStatsService.Stub {
+@@ -946,6 +953,11 @@ public class NetworkStatsService extends INetworkStatsService.Stub {
+             }
+         }
+ 
++        /** Returns whether the kernel supports Android's networking eBPF maps. */
++        public boolean isBpfSupported() {
++            return SystemProperties.getBoolean("ro.kernel.ebpf.supported", true);
++        }
++
+         /** Gets whether the build is userdebug. */
+         public boolean isDebuggable() {
+             return Build.isDebuggable();
+@@ -2039,7 +2051,6 @@ public class NetworkStatsService extends INetworkStatsService.Stub {
  
      private void setKernelCounterSet(int uid, int set) {
          if (mUidCounterSetMap == null) {
@@ -374,7 +357,7 @@ index fb712a18ec4b42571aea03dd17666e1a75ddcfdc..7e5548649f013002426d527e3abb5871
              return;
          }
  
-@@ -2851,6 +2861,7 @@ public class NetworkStatsService extends INetworkStatsService.Stub {
+@@ -2851,6 +2862,7 @@ public class NetworkStatsService extends INetworkStatsService.Stub {
  
      private <K extends StatsMapKey, V extends StatsMapValue> void deleteStatsMapTagData(
              IBpfMap<K, V> statsMap, int uid) {
@@ -382,7 +365,7 @@ index fb712a18ec4b42571aea03dd17666e1a75ddcfdc..7e5548649f013002426d527e3abb5871
          try {
              statsMap.forEach((key, value) -> {
                  if (key.uid == uid) {
-@@ -2871,6 +2882,7 @@ public class NetworkStatsService extends INetworkStatsService.Stub {
+@@ -2871,6 +2883,7 @@ public class NetworkStatsService extends INetworkStatsService.Stub {
       * @param uid
       */
      private void deleteKernelTagData(int uid) {
@@ -390,18 +373,19 @@ index fb712a18ec4b42571aea03dd17666e1a75ddcfdc..7e5548649f013002426d527e3abb5871
          try {
              mCookieTagMap.forEach((key, value) -> {
                  // If SkDestroyListener deletes the socket tag while this code is running,
-@@ -3386,7 +3398,8 @@ public class NetworkStatsService extends INetworkStatsService.Stub {
+@@ -3386,6 +3399,10 @@ public class NetworkStatsService extends INetworkStatsService.Stub {
          try {
              return mStatsFactory.readNetworkStatsDetail(uid, ifaces, tag);
          } catch (IOException e) {
--            throw new IllegalStateException(e);
-+            Log.e(TAG, "Failed grabbing network stats", e);
-+            return new NetworkStats(SystemClock.elapsedRealtime(), 0);
++            if (!mDeps.isBpfSupported()) {
++                Log.e(TAG, "Failed grabbing network stats without eBPF", e);
++                return new NetworkStats(SystemClock.elapsedRealtime(), 0);
++            }
+             throw new IllegalStateException(e);
          }
      }
- 
 diff --git a/service/jni/com_android_server_connectivity_ClatCoordinator.cpp b/service/jni/com_android_server_connectivity_ClatCoordinator.cpp
-index c0082bbe3a7e0de670bf804f030555231637af13..4f1b75d44c98e74abf7e84c8e60d891c1a001c96 100644
+index c0082bbe3a..4f1b75d44c 100644
 --- a/service/jni/com_android_server_connectivity_ClatCoordinator.cpp
 +++ b/service/jni/com_android_server_connectivity_ClatCoordinator.cpp
 @@ -101,6 +101,14 @@ static void verifyClatPerms() {
@@ -420,23 +404,28 @@ index c0082bbe3a7e0de670bf804f030555231637af13..4f1b75d44c98e74abf7e84c8e60d891c
      // since this is built into the apex file system image,
      // failures here are 99% likely to be build problems.
 diff --git a/service/src/com/android/server/BpfNetMaps.java b/service/src/com/android/server/BpfNetMaps.java
-index 44868b2db7492ca479fabbcc7d77f1cc98e39484..d5a9011abb0633f80308920e7215dc4b14aefd29 100644
+index 44868b2db7..d8a328d905 100644
 --- a/service/src/com/android/server/BpfNetMaps.java
 +++ b/service/src/com/android/server/BpfNetMaps.java
-@@ -369,7 +369,11 @@ public class BpfNetMaps {
+@@ -55,6 +55,7 @@ import android.net.UidOwnerValue;
+ import android.os.Build;
+ import android.os.RemoteException;
+ import android.os.ServiceSpecificException;
++import android.os.SystemProperties;
+ import android.os.UserHandle;
+ import android.system.ErrnoException;
+ import android.system.Os;
+@@ -368,7 +369,8 @@ public class BpfNetMaps {
+ 
      @VisibleForTesting
      public BpfNetMaps(final Context context, final INetd netd, final Dependencies deps) {
-         if (SdkLevel.isAtLeastT()) {
--            ensureInitialized(context);
-+            try {
-+                ensureInitialized(context);
-+            } catch (Throwable t) {
-+                Log.e(TAG, "BPF maps unavailable; continuing without eBPF", t);
-+            }
+-        if (SdkLevel.isAtLeastT()) {
++        if (SdkLevel.isAtLeastT()
++                && SystemProperties.getBoolean("ro.kernel.ebpf.supported", true)) {
+             ensureInitialized(context);
          }
          mNetd = netd;
-         mDeps = deps;
-@@ -388,6 +392,8 @@ public class BpfNetMaps {
+@@ -388,6 +390,8 @@ public class BpfNetMaps {
      }
  
      private void removeRule(final int uid, final long match, final String caller) {
@@ -445,7 +434,7 @@ index 44868b2db7492ca479fabbcc7d77f1cc98e39484..d5a9011abb0633f80308920e7215dc4b
          try {
              synchronized (sUidOwnerMap) {
                  final UidOwnerValue oldMatch = sUidOwnerMap.getValue(new S32(uid));
-@@ -415,6 +421,8 @@ public class BpfNetMaps {
+@@ -415,6 +419,8 @@ public class BpfNetMaps {
      }
  
      private void addRule(final int uid, final long match, final int iif, final String caller) {
@@ -454,7 +443,7 @@ index 44868b2db7492ca479fabbcc7d77f1cc98e39484..d5a9011abb0633f80308920e7215dc4b
          if (match != IIF_MATCH && iif != 0) {
              throw new ServiceSpecificException(EINVAL,
                      "Non-interface match must have zero interface index");
-@@ -461,6 +469,8 @@ public class BpfNetMaps {
+@@ -461,6 +467,8 @@ public class BpfNetMaps {
      public void setChildChain(final int childChain, final boolean enable) {
          throwIfPreT("setChildChain is not available on pre-T devices");
  
@@ -463,7 +452,7 @@ index 44868b2db7492ca479fabbcc7d77f1cc98e39484..d5a9011abb0633f80308920e7215dc4b
          final long match = getMatchByFirewallChain(childChain);
          try {
              synchronized (sUidRulesConfigBpfMapLock) {
-@@ -510,6 +520,8 @@ public class BpfNetMaps {
+@@ -510,6 +518,8 @@ public class BpfNetMaps {
      public void replaceUidChain(final int chain, final int[] uids) {
          throwIfPreT("replaceUidChain is not available on pre-T devices");
  
@@ -472,7 +461,7 @@ index 44868b2db7492ca479fabbcc7d77f1cc98e39484..d5a9011abb0633f80308920e7215dc4b
          final long match;
          try {
              match = getMatchByFirewallChain(chain);
-@@ -589,6 +601,9 @@ public class BpfNetMaps {
+@@ -589,6 +599,9 @@ public class BpfNetMaps {
      private Set<Integer> getUidsMatchEnabled(final int childChain) throws ErrnoException {
          final long match = getMatchByFirewallChain(childChain);
          Set<Integer> uids = new ArraySet<>();
@@ -482,7 +471,7 @@ index 44868b2db7492ca479fabbcc7d77f1cc98e39484..d5a9011abb0633f80308920e7215dc4b
          synchronized (sUidOwnerMap) {
              sUidOwnerMap.forEach((uid, val) -> {
                  if (val == null) {
-@@ -747,6 +762,8 @@ public class BpfNetMaps {
+@@ -747,6 +760,8 @@ public class BpfNetMaps {
      public void swapActiveStatsMap() {
          throwIfPreT("swapActiveStatsMap is not available on pre-T devices");
  
@@ -491,7 +480,7 @@ index 44868b2db7492ca479fabbcc7d77f1cc98e39484..d5a9011abb0633f80308920e7215dc4b
          try {
              synchronized (sCurrentStatsMapConfigLock) {
                  final long config = sConfigurationMap.getValue(
-@@ -787,6 +804,8 @@ public class BpfNetMaps {
+@@ -787,6 +802,8 @@ public class BpfNetMaps {
              return;
          }
  
@@ -500,7 +489,7 @@ index 44868b2db7492ca479fabbcc7d77f1cc98e39484..d5a9011abb0633f80308920e7215dc4b
          // Remove the entry if package is uninstalled or uid has only INTERNET permission.
          if (permissions == PERMISSION_UNINSTALLED || permissions == PERMISSION_INTERNET) {
              for (final int uid : uids) {
-@@ -820,6 +839,7 @@ public class BpfNetMaps {
+@@ -820,6 +837,7 @@ public class BpfNetMaps {
      @RequiresApi(Build.VERSION_CODES.TIRAMISU)
      public int getNetPermForUid(final int uid) {
          final int appId = UserHandle.getAppId(uid);
@@ -508,7 +497,7 @@ index 44868b2db7492ca479fabbcc7d77f1cc98e39484..d5a9011abb0633f80308920e7215dc4b
          try {
              // Key of uid permission map is appId
              // TODO: Rename map name
-@@ -843,6 +863,8 @@ public class BpfNetMaps {
+@@ -843,6 +861,8 @@ public class BpfNetMaps {
      public void setDataSaverEnabled(boolean enable) {
          throwIfPreT("setDataSaverEnabled is not available on pre-T devices");
  
@@ -517,7 +506,7 @@ index 44868b2db7492ca479fabbcc7d77f1cc98e39484..d5a9011abb0633f80308920e7215dc4b
          try {
              final short config = enable ? DATA_SAVER_ENABLED : DATA_SAVER_DISABLED;
              sDataSaverEnabledMap.updateEntry(DATA_SAVER_ENABLED_KEY, new U8(config));
-@@ -861,6 +883,7 @@ public class BpfNetMaps {
+@@ -861,6 +881,7 @@ public class BpfNetMaps {
      @RequiresApi(Build.VERSION_CODES.TIRAMISU)
      public void setIngressDiscardRule(final InetAddress address, final String iface) {
          throwIfPreT("setIngressDiscardRule is not available on pre-T devices");
@@ -525,7 +514,7 @@ index 44868b2db7492ca479fabbcc7d77f1cc98e39484..d5a9011abb0633f80308920e7215dc4b
          final int ifIndex = mDeps.getIfIndex(iface);
          if (ifIndex == 0) {
              Log.e(TAG, "Failed to get if index, skip setting ingress discard rule for " + address
-@@ -884,6 +907,7 @@ public class BpfNetMaps {
+@@ -884,6 +905,7 @@ public class BpfNetMaps {
      @RequiresApi(Build.VERSION_CODES.TIRAMISU)
      public void removeIngressDiscardRule(final InetAddress address) {
          throwIfPreT("removeIngressDiscardRule is not available on pre-T devices");
@@ -533,7 +522,7 @@ index 44868b2db7492ca479fabbcc7d77f1cc98e39484..d5a9011abb0633f80308920e7215dc4b
          try {
              sIngressDiscardMap.deleteEntry(new IngressDiscardKey(address));
          } catch (ErrnoException e) {
-@@ -950,7 +974,9 @@ public class BpfNetMaps {
+@@ -950,7 +972,9 @@ public class BpfNetMaps {
          // deletion. netd and skDestroyListener could delete CookieTagMap entry concurrently.
          // So using Set to count the number of entry in the map.
          Set<K> keySet = new ArraySet<>();
@@ -544,7 +533,7 @@ index 44868b2db7492ca479fabbcc7d77f1cc98e39484..d5a9011abb0633f80308920e7215dc4b
          return keySet.size();
      }
  
-@@ -998,6 +1024,7 @@ public class BpfNetMaps {
+@@ -998,6 +1022,7 @@ public class BpfNetMaps {
  
      @RequiresApi(Build.VERSION_CODES.TIRAMISU)
      private void dumpOwnerMatchConfig(final IndentingPrintWriter pw) {
@@ -552,7 +541,7 @@ index 44868b2db7492ca479fabbcc7d77f1cc98e39484..d5a9011abb0633f80308920e7215dc4b
          try {
              final long match = sConfigurationMap.getValue(UID_RULES_CONFIGURATION_KEY).val;
              pw.println("current ownerMatch configuration: " + match + " " + matchToString(match));
-@@ -1007,6 +1034,7 @@ public class BpfNetMaps {
+@@ -1007,6 +1032,7 @@ public class BpfNetMaps {
      }
  
      private void dumpCurrentStatsMapConfig(final IndentingPrintWriter pw) {
@@ -560,7 +549,7 @@ index 44868b2db7492ca479fabbcc7d77f1cc98e39484..d5a9011abb0633f80308920e7215dc4b
          try {
              final long config = sConfigurationMap.getValue(CURRENT_STATS_MAP_CONFIGURATION_KEY).val;
              final String currentStatsMap =
-@@ -1018,6 +1046,7 @@ public class BpfNetMaps {
+@@ -1018,6 +1044,7 @@ public class BpfNetMaps {
      }
  
      private void dumpDataSaverConfig(final IndentingPrintWriter pw) {
@@ -569,7 +558,7 @@ index 44868b2db7492ca479fabbcc7d77f1cc98e39484..d5a9011abb0633f80308920e7215dc4b
              final short config = sDataSaverEnabledMap.getValue(DATA_SAVER_ENABLED_KEY).val;
              // Any non-zero value converted from short to boolean is true by convention.
 diff --git a/tests/unit/java/com/android/server/net/NetworkStatsServiceTest.java b/tests/unit/java/com/android/server/net/NetworkStatsServiceTest.java
-index b5284800570cab6a0f25fbc6deb1be984d7cd775..ee29f9abb7e8e1f913c9e77700f5b03bfb3c5a0a 100644
+index b528480057..7264d777ef 100644
 --- a/tests/unit/java/com/android/server/net/NetworkStatsServiceTest.java
 +++ b/tests/unit/java/com/android/server/net/NetworkStatsServiceTest.java
 @@ -195,6 +195,7 @@ import org.mockito.MockitoAnnotations;
@@ -580,12 +569,33 @@ index b5284800570cab6a0f25fbc6deb1be984d7cd775..ee29f9abb7e8e1f913c9e77700f5b03b
  import java.io.PrintWriter;
  import java.io.StringWriter;
  import java.nio.file.Files;
-@@ -1541,6 +1542,19 @@ public class NetworkStatsServiceTest extends NetworkStatsBaseTest {
+@@ -481,6 +482,7 @@ public class NetworkStatsServiceTest extends NetworkStatsBaseTest {
+     class TestDependencies extends NetworkStatsService.Dependencies {
+         private int mCompareStatsInvocation = 0;
+         private NetworkStats.Entry mMockedTrafficStatsNativeStat = null;
++        private boolean mBpfSupported = true;
+ 
+         @Override
+         public File getLegacyStatsDir() {
+@@ -602,6 +604,11 @@ public class NetworkStatsServiceTest extends NetworkStatsBaseTest {
+             return mIfaceStatsMap;
+         }
+ 
++        @Override
++        public boolean isBpfSupported() {
++            return mBpfSupported;
++        }
++
+         @Override
+         public boolean isDebuggable() {
+             return mIsDebuggable == Boolean.TRUE;
+@@ -1541,6 +1548,20 @@ public class NetworkStatsServiceTest extends NetworkStatsBaseTest {
  
      }
  
 +    @Test
 +    public void testGetUidStatsForTransportWithoutBpfStatsReturnsEmptyStats() throws Exception {
++        mDeps.mBpfSupported = false;
 +        doAnswer(invocation -> {
 +            throw new IOException("BPF maps unavailable");
 +        }).when(mStatsFactory).readNetworkStatsDetail(

@@ -9,7 +9,7 @@
   <project name="android_device_huawei_angler"
            path="device/huawei/angler"
            remote="nexus6p-github"
-           revision="197290e5056065423e136641340287ca827b479d"
+           revision="976572f842d0ffa06776ee08948cd22cbee370bc"
            upstream="refs/heads/lineage-22.2" />
   <project name="android_vendor_huawei_angler"
            path="vendor/huawei/angler"

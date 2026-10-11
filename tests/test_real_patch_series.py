@@ -46,6 +46,35 @@ def load_projects():
 
 @unittest.skipUnless(ANDROID_ROOT_VALUE, "ANDROID_BUILD_TOP is required")
 class RealPatchSeriesTest(unittest.TestCase):
+    def test_series_do_not_hide_bulk_formatting_rewrites(self):
+        for project_path, baseline, _, _ in load_projects():
+            repository = ANDROID_ROOT / project_path
+
+            def changed_lines(ignore_whitespace: bool) -> int:
+                command = ["git", "diff"]
+                if ignore_whitespace:
+                    command.append("-w")
+                command.extend(("--numstat", baseline, "HEAD"))
+                output = run(*command, cwd=repository).stdout
+                total = 0
+                for line in output.splitlines():
+                    added, deleted, _ = line.split("\t", 2)
+                    if added.isdigit():
+                        total += int(added)
+                    if deleted.isdigit():
+                        total += int(deleted)
+                return total
+
+            with self.subTest(project=project_path):
+                whitespace_only_lines = (
+                    changed_lines(False) - changed_lines(True)
+                )
+                self.assertLessEqual(
+                    whitespace_only_lines,
+                    40,
+                    "patch series contains a bulk formatting rewrite",
+                )
+
     def test_gps_patch_excludes_obsolete_build_system_files(self):
         gps = ANDROID_ROOT / "hardware/qcom/gps"
         for relative_path in (
@@ -64,6 +93,26 @@ class RealPatchSeriesTest(unittest.TestCase):
         for test_source in sorted((legacy_radio / "tests").glob("*.cpp")):
             with self.subTest(source=test_source.name):
                 self.assertIn(f'"tests/{test_source.name}"', build_file)
+
+    def test_non_ebpf_bypass_is_scoped_to_the_legacy_opt_out(self):
+        connectivity = ANDROID_ROOT / "packages/modules/Connectivity"
+        bpf_maps = (
+            connectivity
+            / "service/src/com/android/server/BpfNetMaps.java"
+        ).read_text(encoding="utf-8")
+        network_stats = (
+            connectivity
+            / "service-t/src/com/android/server/net/NetworkStatsService.java"
+        ).read_text(encoding="utf-8")
+        bpf_header = (
+            connectivity / "bpf/headers/include/bpf/BpfMap.h"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("ro.kernel.ebpf.supported", bpf_maps)
+        self.assertIn("isBpfSupported()", network_stats)
+        self.assertNotIn("catch (Throwable t)", bpf_maps)
+        self.assertIn("bool allowMissing = false", bpf_header)
+        self.assertIn("if (allowMissing && !mMapFd.ok()) return;", bpf_header)
 
     def test_all_platform_series_reproduce_the_current_working_trees(self):
         projects = load_projects()

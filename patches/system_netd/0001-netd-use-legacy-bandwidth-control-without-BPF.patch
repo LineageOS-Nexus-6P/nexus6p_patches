@@ -1,39 +1,20 @@
-From b326b28bd4a7433836433aae3aed02724cd66305 Mon Sep 17 00:00:00 2001
+From 7bf69c48a8a1400b5c1ecda6fff3d8ffe2d3b2b2 Mon Sep 17 00:00:00 2001
 From: derveror <derveror@gmail.com>
 Date: Sun, 11 Oct 2026 17:31:34 -0400
 Subject: [PATCH] netd: use legacy bandwidth control without BPF
 
 Change-Id: I46845596c174616ec7ab0db689876ab656a43bd9
 ---
- server/BandwidthController.cpp     | 122 ++++++++++++++++------------
- server/BandwidthController.h       |  18 +++--
- server/BandwidthControllerTest.cpp | 126 ++++++++++++++++++-----------
- server/Controllers.cpp             |   6 +-
- 4 files changed, 162 insertions(+), 110 deletions(-)
+ server/BandwidthController.cpp     | 45 ++++++++++++++++++++++--------
+ server/BandwidthController.h       |  2 ++
+ server/BandwidthControllerTest.cpp | 38 +++++++++++++++++++++++--
+ server/Controllers.cpp             |  6 +++-
+ 4 files changed, 77 insertions(+), 14 deletions(-)
 
 diff --git a/server/BandwidthController.cpp b/server/BandwidthController.cpp
-index 8a9673874aadc0b069ead63c49f54e5026f28f04..3df955ad42a30a74ee24fb0dc26c3840a0383faf 100644
+index 8a967387..7067ded0 100644
 --- a/server/BandwidthController.cpp
 +++ b/server/BandwidthController.cpp
-@@ -38,8 +38,8 @@
- #include <sys/wait.h>
- 
- #include <linux/netlink.h>
--#include <linux/rtnetlink.h>
- #include <linux/pkt_sched.h>
-+#include <linux/rtnetlink.h>
- 
- #include "android-base/stringprintf.h"
- #include "android-base/strings.h"
-@@ -56,7 +56,7 @@
- #include "android/net/INetd.h"
- 
- /* Alphabetical */
--#define ALERT_IPT_TEMPLATE "%s %s -m quota2 ! --quota %" PRId64" --name %s\n"
-+#define ALERT_IPT_TEMPLATE "%s %s -m quota2 ! --quota %" PRId64 " --name %s\n"
- const char BandwidthController::LOCAL_INPUT[] = "bw_INPUT";
- const char BandwidthController::LOCAL_FORWARD[] = "bw_FORWARD";
- const char BandwidthController::LOCAL_OUTPUT[] = "bw_OUTPUT";
 @@ -200,7 +200,7 @@ static const uint32_t uidBillingMask = Fwmark::getUidBillingMask();
   * See go/ipsec-data-accounting for more information.
   */
@@ -113,7 +94,7 @@ index 8a9673874aadc0b069ead63c49f54e5026f28f04..3df955ad42a30a74ee24fb0dc26c3840
  
  void BandwidthController::flushCleanTables(bool doClean) {
      /* Flush and remove the bw_costly_<iface> tables */
-@@ -283,22 +306,23 @@ int BandwidthController::enableBandwidthControl() {
+@@ -283,7 +306,7 @@ int BandwidthController::enableBandwidthControl() {
  
      flushCleanTables(false);
  
@@ -122,191 +103,11 @@ index 8a9673874aadc0b069ead63c49f54e5026f28f04..3df955ad42a30a74ee24fb0dc26c3840
      return iptablesRestoreFunction(V4V6, commands, nullptr);
  }
  
- std::string BandwidthController::makeDataSaverCommand(IptablesTarget target, bool enable) {
-     std::string cmd;
--    const char *chainName = "bw_data_saver";
--    const char *op = jumpToString(enable ? IptJumpReject : IptJumpReturn);
--    std::string criticalCommands = enable ?
--            FirewallController::makeCriticalCommands(target, chainName) : "";
-+    const char* chainName = "bw_data_saver";
-+    const char* op = jumpToString(enable ? IptJumpReject : IptJumpReturn);
-+    std::string criticalCommands =
-+            enable ? FirewallController::makeCriticalCommands(target, chainName) : "";
-     StringAppendF(&cmd,
--        "*filter\n"
--        ":%s -\n"
--        "%s"
--        "-A %s%s\n"
--        "COMMIT\n", chainName, criticalCommands.c_str(), chainName, op);
-+                  "*filter\n"
-+                  ":%s -\n"
-+                  "%s"
-+                  "-A %s%s\n"
-+                  "COMMIT\n",
-+                  chainName, criticalCommands.c_str(), chainName, op);
-     return cmd;
- }
- 
-@@ -319,8 +343,7 @@ int BandwidthController::setInterfaceSharedQuota(const std::string& iface, int64
-         ALOGE("Invalid bytes value. 1..max_int64.");
-         return -1;
-     }
--    if (!isIfaceName(iface))
--        return -1;
-+    if (!isIfaceName(iface)) return -1;
- 
-     if (maxBytes == -1) {
-         return removeInterfaceSharedQuota(iface);
-@@ -370,8 +393,7 @@ int BandwidthController::removeInterfaceSharedQuota(const std::string& iface) {
-     constexpr char cost[] = "shared";
-     constexpr char chain[] = "bw_costly_shared";
- 
--    if (!isIfaceName(iface))
--        return -1;
-+    if (!isIfaceName(iface)) return -1;
- 
-     auto it = mSharedQuotaIfaces.find(iface);
- 
-@@ -405,7 +427,6 @@ int BandwidthController::removeInterfaceSharedQuota(const std::string& iface) {
-     }
- 
-     return res;
--
- }
- 
- int BandwidthController::setInterfaceQuota(const std::string& iface, int64_t maxBytes) {
-@@ -459,7 +480,7 @@ int BandwidthController::setInterfaceQuota(const std::string& iface, int64_t max
-     return 0;
- }
- 
--int BandwidthController::getInterfaceSharedQuota(int64_t *bytes) {
-+int BandwidthController::getInterfaceSharedQuota(int64_t* bytes) {
-     return getInterfaceQuota("shared", bytes);
- }
- 
-@@ -536,7 +557,7 @@ int BandwidthController::updateQuota(const std::string& quotaName, int64_t bytes
- 
- int BandwidthController::runIptablesAlertCmd(IptOp op, const std::string& alertName,
-                                              int64_t bytes) {
--    const char *opFlag = opToString(op);
-+    const char* opFlag = opToString(op);
-     std::string alertQuotaCmd = "*filter\n";
- 
-     // TODO: consider using an alternate template for the delete that does not include the --quota
-@@ -555,7 +576,7 @@ int BandwidthController::runIptablesAlertCmd(IptOp op, const std::string& alertN
- }
- 
- int BandwidthController::setGlobalAlert(int64_t bytes) {
--    const char *alertName = ALERT_GLOBAL_NAME;
-+    const char* alertName = ALERT_GLOBAL_NAME;
- 
-     if (!bytes) {
-         ALOGE("Invalid bytes value. 1..max_int64.");
-@@ -576,8 +597,7 @@ int BandwidthController::setGlobalAlert(int64_t bytes) {
- }
- 
- int BandwidthController::removeGlobalAlert() {
--
--    const char *alertName = ALERT_GLOBAL_NAME;
-+    const char* alertName = ALERT_GLOBAL_NAME;
- 
-     if (!mGlobalAlertBytes) {
-         ALOGE("No prior alert set");
-@@ -646,10 +666,9 @@ int BandwidthController::setCostlyAlert(const std::string& costName, int64_t byt
-         res = updateQuota(alertName, *alertBytes);
-     } else {
-         std::vector<std::string> commands = {
--            "*filter\n",
--            StringPrintf(ALERT_IPT_TEMPLATE, "-A", chainName.c_str(), bytes, alertName.c_str()),
--            "COMMIT\n"
--        };
-+                "*filter\n",
-+                StringPrintf(ALERT_IPT_TEMPLATE, "-A", chainName.c_str(), bytes, alertName.c_str()),
-+                "COMMIT\n"};
-         res = iptablesRestoreFunction(V4V6, Join(commands, ""), nullptr);
-         if (res) {
-             ALOGE("Failed to set costly alert for %s", costName.c_str());
-@@ -675,11 +694,10 @@ int BandwidthController::removeCostlyAlert(const std::string& costName, int64_t*
- 
-     std::string alertName = costName + "Alert";
-     std::string chainName = "bw_costly_" + costName;
--    std::vector<std::string> commands = {
--        "*filter\n",
--        StringPrintf(ALERT_IPT_TEMPLATE, "-D", chainName.c_str(), *alertBytes, alertName.c_str()),
--        "COMMIT\n"
--    };
-+    std::vector<std::string> commands = {"*filter\n",
-+                                         StringPrintf(ALERT_IPT_TEMPLATE, "-D", chainName.c_str(),
-+                                                      *alertBytes, alertName.c_str()),
-+                                         "COMMIT\n"};
-     if (iptablesRestoreFunction(V4V6, Join(commands, ""), nullptr) != 0) {
-         ALOGE("Failed to remove costly alert %s", costName.c_str());
-         return -EREMOTEIO;
-@@ -705,7 +723,7 @@ void BandwidthController::flushExistingCostlyTables(bool doClean) {
- void BandwidthController::parseAndFlushCostlyTables(const std::string& ruleList, bool doRemove) {
-     std::stringstream stream(ruleList);
-     std::string rule;
--    std::vector<std::string> clearCommands = { "*filter" };
-+    std::vector<std::string> clearCommands = {"*filter"};
-     std::string chainName;
- 
-     // Find and flush all rules starting with "-N bw_costly_<iface>" except "-N bw_costly_shared".
-@@ -733,25 +751,25 @@ void BandwidthController::parseAndFlushCostlyTables(const std::string& ruleList,
-     iptablesRestoreFunction(V4V6, Join(clearCommands, '\n'), nullptr);
- }
- 
--inline const char *BandwidthController::opToString(IptOp op) {
-+inline const char* BandwidthController::opToString(IptOp op) {
-     switch (op) {
--    case IptOpInsert:
--        return "-I";
--    case IptOpDelete:
--        return "-D";
-+        case IptOpInsert:
-+            return "-I";
-+        case IptOpDelete:
-+            return "-D";
-     }
- }
- 
--inline const char *BandwidthController::jumpToString(IptJumpOp jumpHandling) {
-+inline const char* BandwidthController::jumpToString(IptJumpOp jumpHandling) {
-     /*
-      * Must be careful what one rejects with, as upper layer protocols will just
-      * keep on hammering the device until the number of retries are done.
-      * For port-unreachable (default), TCP should consider as an abort (RFC1122).
-      */
-     switch (jumpHandling) {
--    case IptJumpReject:
--        return " -j REJECT";
--    case IptJumpReturn:
--        return " -j RETURN";
-+        case IptJumpReject:
-+            return " -j REJECT";
-+        case IptJumpReturn:
-+            return " -j RETURN";
-     }
- }
 diff --git a/server/BandwidthController.h b/server/BandwidthController.h
-index bf89eb4723a6fb2e3bd6abe636bcfd478ba8a42c..7f68a3745dc6c94914e131b35546eb7220fdd147 100644
+index bf89eb47..ccd41305 100644
 --- a/server/BandwidthController.h
 +++ b/server/BandwidthController.h
-@@ -17,19 +17,20 @@
- #define _BANDWIDTH_CONTROLLER_H
- 
- #include <map>
-+#include <mutex>
- #include <set>
- #include <string>
- #include <utility>
- #include <vector>
--#include <mutex>
- 
- #include "NetdConstants.h"
- 
- class BandwidthController {
--public:
-+  public:
+@@ -30,6 +30,7 @@ public:
      std::mutex lock;
  
      BandwidthController();
@@ -314,30 +115,7 @@ index bf89eb4723a6fb2e3bd6abe636bcfd478ba8a42c..7f68a3745dc6c94914e131b35546eb72
  
      int setupIptablesHooks();
  
-@@ -37,7 +38,7 @@ public:
-     int enableDataSaver(bool enable);
- 
-     int setInterfaceSharedQuota(const std::string& iface, int64_t bytes);
--    int getInterfaceSharedQuota(int64_t *bytes);
-+    int getInterfaceSharedQuota(int64_t* bytes);
-     int removeInterfaceSharedQuota(const std::string& iface);
- 
-     int setInterfaceQuota(const std::string& iface, int64_t bytes);
-@@ -111,15 +112,16 @@ public:
- 
-     // For testing.
-     friend class BandwidthControllerTest;
--    static int (*execFunction)(int, char **, int *, bool, bool);
--    static FILE *(*popenFunction)(const char *, const char *);
--    static int (*iptablesRestoreFunction)(IptablesTarget, const std::string&, std::string *);
-+    static int (*execFunction)(int, char**, int*, bool, bool);
-+    static FILE* (*popenFunction)(const char*, const char*);
-+    static int (*iptablesRestoreFunction)(IptablesTarget, const std::string&, std::string*);
- 
--    static const char *opToString(IptOp op);
--    static const char *jumpToString(IptJumpOp jumpHandling);
-+    static const char* opToString(IptOp op);
-+    static const char* jumpToString(IptJumpOp jumpHandling);
+@@ -120,6 +121,7 @@ public:
  
      int64_t mSharedQuotaBytes = 0;
      int64_t mGlobalAlertBytes = 0;
@@ -346,130 +124,10 @@ index bf89eb4723a6fb2e3bd6abe636bcfd478ba8a42c..7f68a3745dc6c94914e131b35546eb72
      std::map<std::string, QuotaInfo> mQuotaIfaces;
      std::set<std::string> mSharedQuotaIfaces;
 diff --git a/server/BandwidthControllerTest.cpp b/server/BandwidthControllerTest.cpp
-index 546a738ebdf683f306b5724ea76a42a5038811e7..e0dcd45d11e1e48012042da5ef9f116195bd5e28 100644
+index 546a738e..4bc98a42 100644
 --- a/server/BandwidthControllerTest.cpp
 +++ b/server/BandwidthControllerTest.cpp
-@@ -19,16 +19,16 @@
- #include <string>
- #include <vector>
- 
--#include <inttypes.h>
- #include <fcntl.h>
--#include <unistd.h>
--#include <sys/types.h>
-+#include <inttypes.h>
- #include <sys/socket.h>
-+#include <sys/types.h>
-+#include <unistd.h>
- 
- #include <gtest/gtest.h>
- 
--#include <android-base/strings.h>
- #include <android-base/stringprintf.h>
-+#include <android-base/strings.h>
- 
- #include <netdutils/MockSyscalls.h>
- #include "BandwidthController.h"
-@@ -50,27 +50,23 @@ using android::netdutils::UniqueFile;
- using android::netdutils::status::ok;
- 
- class BandwidthControllerTest : public IptablesBaseTest {
--protected:
-+  protected:
-     BandwidthControllerTest() {
-         BandwidthController::iptablesRestoreFunction = fakeExecIptablesRestoreWithOutput;
-     }
-     BandwidthController mBw;
-     TunInterface mTun;
- 
--    void SetUp() {
--        ASSERT_EQ(0, mTun.init());
--    }
-+    void SetUp() { ASSERT_EQ(0, mTun.init()); }
- 
--    void TearDown() {
--        mTun.destroy();
--    }
-+    void TearDown() { mTun.destroy(); }
- 
-     void expectSetupCommands(const std::string& expectedClean,
-                              const std::string& expectedAccounting) {
-         std::string expectedList =
--            "*filter\n"
--            "-S\n"
--            "COMMIT\n";
-+                "*filter\n"
-+                "-S\n"
-+                "COMMIT\n";
- 
-         std::string expectedFlush =
-                 "*filter\n"
-@@ -90,13 +86,13 @@ protected:
-                 ":bw_mangle_POSTROUTING -\n"
-                 "COMMIT\n";
- 
--        ExpectedIptablesCommands expected = {{ V4, expectedList }};
-+        ExpectedIptablesCommands expected = {{V4, expectedList}};
-         if (expectedClean.size()) {
--            expected.push_back({ V4V6, expectedClean });
-+            expected.push_back({V4V6, expectedClean});
-         }
--        expected.push_back({ V4V6, expectedFlush });
-+        expected.push_back({V4V6, expectedFlush});
-         if (expectedAccounting.size()) {
--            expected.push_back({ V4V6, expectedAccounting });
-+            expected.push_back({V4V6, expectedAccounting});
-         }
- 
-         expectIptablesRestoreCommands(expected);
-@@ -120,10 +116,10 @@ protected:
- 
-         EXPECT_CALL(mSyscalls, fopen(_, _)).WillOnce(Return(ByMove(UniqueFile(dummyFile))));
-         EXPECT_CALL(mSyscalls, vfprintf(dummyFile, _, _))
--            .WillOnce(Invoke([quota](FILE*, const std::string&, va_list ap) {
--                EXPECT_EQ(quota, va_arg(ap, uint64_t));
--                return 0;
--            }));
-+                .WillOnce(Invoke([quota](FILE*, const std::string&, va_list ap) {
-+                    EXPECT_EQ(quota, va_arg(ap, uint64_t));
-+                    return 0;
-+                }));
-         EXPECT_CALL(mSyscalls, fclose(dummyFile)).WillOnce(Return(ok));
-     }
- 
-@@ -133,20 +129,20 @@ protected:
- TEST_F(BandwidthControllerTest, TestSetupIptablesHooks) {
-     // Pretend some bw_costly_shared_<iface> rules already exist...
-     addIptablesRestoreOutput(
--        "-P OUTPUT ACCEPT\n"
--        "-N bw_costly_rmnet_data0\n"
--        "-N bw_costly_shared\n"
--        "-N unrelated\n"
--        "-N bw_costly_rmnet_data7\n");
-+            "-P OUTPUT ACCEPT\n"
-+            "-N bw_costly_rmnet_data0\n"
-+            "-N bw_costly_shared\n"
-+            "-N unrelated\n"
-+            "-N bw_costly_rmnet_data7\n");
- 
-     // ... and expect that they be flushed and deleted.
-     std::string expectedCleanCmds =
--        "*filter\n"
--        ":bw_costly_rmnet_data0 -\n"
--        "-X bw_costly_rmnet_data0\n"
--        ":bw_costly_rmnet_data7 -\n"
--        "-X bw_costly_rmnet_data7\n"
--        "COMMIT\n";
-+            "*filter\n"
-+            ":bw_costly_rmnet_data0 -\n"
-+            "-X bw_costly_rmnet_data0\n"
-+            ":bw_costly_rmnet_data7 -\n"
-+            "-X bw_costly_rmnet_data7\n"
-+            "COMMIT\n";
- 
-     mBw.setupIptablesHooks();
-     expectSetupCommands(expectedCleanCmds, "");
-@@ -200,10 +196,45 @@ TEST_F(BandwidthControllerTest, TestEnableBandwidthControl) {
+@@ -200,10 +200,45 @@ TEST_F(BandwidthControllerTest, TestEnableBandwidthControl) {
              "COMMIT\n";
      // clang-format on
  
@@ -516,71 +174,13 @@ index 546a738ebdf683f306b5724ea76a42a5038811e7..e0dcd45d11e1e48012042da5ef9f1161
  TEST_F(BandwidthControllerTest, TestEnableDataSaver) {
      mBw.enableDataSaver(true);
      std::string expected4 =
-@@ -223,8 +254,8 @@ TEST_F(BandwidthControllerTest, TestEnableDataSaver) {
-             "-A bw_data_saver -j REJECT\n"
-             "COMMIT\n";
-     expectIptablesRestoreCommands({
--        {V4, expected4},
--        {V6, expected6},
-+            {V4, expected4},
-+            {V6, expected6},
-     });
- 
-     mBw.enableDataSaver(false);
-@@ -234,8 +265,8 @@ TEST_F(BandwidthControllerTest, TestEnableDataSaver) {
-             "-A bw_data_saver -j RETURN\n"
-             "COMMIT\n"};
-     expectIptablesRestoreCommands({
--        {V4, expected},
--        {V6, expected},
-+            {V4, expected},
-+            {V6, expected},
-     });
- }
- 
-@@ -373,8 +404,8 @@ TEST_F(BandwidthControllerTest, TestSetInterfaceSharedQuotaUpdate) {
- TEST_F(BandwidthControllerTest, TestSetInterfaceSharedQuotaTwoInterfaces) {
-     constexpr uint64_t kQuota = 123456;
-     const std::vector<std::string> ifaces{
--        {"a" + mTun.name()},
--        {"b" + mTun.name()},
-+            {"a" + mTun.name()},
-+            {"b" + mTun.name()},
-     };
- 
-     for (const auto& iface : ifaces) {
-@@ -417,10 +448,9 @@ TEST_F(BandwidthControllerTest, CostlyAlert) {
-     int64_t alertBytes = 0;
- 
-     std::vector<std::string> expected = {
--        "*filter\n"
--        "-A bw_costly_shared -m quota2 ! --quota 123456 --name sharedAlert\n"
--        "COMMIT\n"
--    };
-+            "*filter\n"
-+            "-A bw_costly_shared -m quota2 ! --quota 123456 --name sharedAlert\n"
-+            "COMMIT\n"};
-     EXPECT_EQ(0, setCostlyAlert("shared", kQuota, &alertBytes));
-     EXPECT_EQ(kQuota, alertBytes);
-     expectIptablesRestoreCommands(expected);
-@@ -432,12 +462,10 @@ TEST_F(BandwidthControllerTest, CostlyAlert) {
-     expectIptablesRestoreCommands(expected);
- 
-     expected = {
--        "*filter\n"
--        "-D bw_costly_shared -m quota2 ! --quota 123457 --name sharedAlert\n"
--        "COMMIT\n"
--    };
-+            "*filter\n"
-+            "-D bw_costly_shared -m quota2 ! --quota 123457 --name sharedAlert\n"
-+            "COMMIT\n"};
-     EXPECT_EQ(0, removeCostlyAlert("shared", &alertBytes));
+@@ -440,4 +475,3 @@ TEST_F(BandwidthControllerTest, CostlyAlert) {
      EXPECT_EQ(0, alertBytes);
      expectIptablesRestoreCommands(expected);
  }
 -
 diff --git a/server/Controllers.cpp b/server/Controllers.cpp
-index ea34897314d4562febe34977d8e4f0ef899a6ee8..d0d9554433fdd209deec3ec369deea2237f2d4e7 100644
+index ea348973..d0d95544 100644
 --- a/server/Controllers.cpp
 +++ b/server/Controllers.cpp
 @@ -19,6 +19,7 @@

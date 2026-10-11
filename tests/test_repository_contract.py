@@ -36,6 +36,14 @@ class RepositoryContractTest(unittest.TestCase):
                 f"patch disables error handling with #if 0: {patch.relative_to(ROOT)}",
             )
 
+    def test_exported_patches_do_not_add_broad_throwable_catches(self):
+        for patch in sorted((ROOT / "patches").glob("*/*.patch")):
+            for line in patch.read_text(encoding="utf-8").splitlines():
+                self.assertFalse(
+                    line.startswith("+") and "catch (Throwable" in line,
+                    f"patch hides unrelated failures: {patch.relative_to(ROOT)}",
+                )
+
     def test_patch_series_contains_no_formatting_only_patch(self):
         """Every exported mail patch must change normalized source content."""
         for patch in sorted((ROOT / "patches").glob("*/*.patch")):

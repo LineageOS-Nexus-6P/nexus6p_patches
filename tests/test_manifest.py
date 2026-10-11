@@ -44,7 +44,7 @@ class ManifestTemplateTest(unittest.TestCase):
             )
 
         expected_revisions = {
-            "device/huawei/angler": "197290e5056065423e136641340287ca827b479d",
+            "device/huawei/angler": "976572f842d0ffa06776ee08948cd22cbee370bc",
             "vendor/huawei/angler": "2256f968e072c2388286fd5e589d48513f202547",
             "kernel/huawei/angler": "f34f4533ece113b5d01e44585902c81e105e3b22",
             "packages/apps/PhhIms": "3909c4517022d3632c459b618101d13c8c73e966",
