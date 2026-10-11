@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<manifest>
+  <!-- Replace @NEXUS6P_ORG@ with the GitHub organization name. -->
+  <remote name="nexus6p-github"
+          fetch="https://github.com/@NEXUS6P_ORG@/" />
+  <remote name="davigamer-github"
+          fetch="https://github.com/" />
+
+  <project name="android_device_huawei_angler"
+           path="device/huawei/angler"
+           remote="nexus6p-github"
+           revision="refs/heads/lineage-22.2" />
+  <project name="android_vendor_huawei_angler"
+           path="vendor/huawei/angler"
+           remote="nexus6p-github"
+           revision="refs/heads/lineage-22.2" />
+  <project name="android_kernel_huawei_angler"
+           path="kernel/huawei/angler"
+           remote="nexus6p-github"
+           revision="refs/heads/lineage-22.2" />
+  <project name="android_packages_apps_PhhIms"
+           path="packages/apps/PhhIms"
+           remote="nexus6p-github"
+           revision="refs/heads/lineage-22.2" />
+
+  <!-- Current LineageOS does not carry the complete MSM8994 display HAL. -->
+  <remove-project name="LineageOS/android_hardware_qcom_display"
+                  path="hardware/qcom/display" />
+  <project name="davigamer987/hardware_qcom_display"
+           path="hardware/qcom/display"
+           remote="davigamer-github"
+           revision="refs/heads/lineage-23.0-caf-msm8994" />
+  <project name="davigamer987/hardware_qcom_media"
+           path="hardware/qcom-caf/msm8994/media"
+           remote="davigamer-github"
+           revision="refs/heads/lineage-23.0-caf-msm8994" />
+</manifest>
