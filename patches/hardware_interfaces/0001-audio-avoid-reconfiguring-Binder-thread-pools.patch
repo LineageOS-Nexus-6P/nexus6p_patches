@@ -1,0 +1,39 @@
+From effb2afb746b8050e0c6248b1f55bb2f56b025ce Mon Sep 17 00:00:00 2001
+From: derveror <derveror@gmail.com>
+Date: Sun, 11 Oct 2026 17:31:33 -0400
+Subject: [PATCH] audio: avoid reconfiguring Binder thread pools
+
+Change-Id: Idba5327a080848325f2fd410d7950496758ef75a
+---
+ audio/common/all-versions/default/service/service.cpp | 11 +++++++----
+ 1 file changed, 7 insertions(+), 4 deletions(-)
+
+diff --git a/audio/common/all-versions/default/service/service.cpp b/audio/common/all-versions/default/service/service.cpp
+index 1557a9505d..0257ea8e83 100644
+--- a/audio/common/all-versions/default/service/service.cpp
++++ b/audio/common/all-versions/default/service/service.cpp
+@@ -75,14 +75,17 @@ static bool registerExternalServiceImplementation(const std::string& libName,
+ int main(int /* argc */, char* /* argv */ []) {
+     signal(SIGPIPE, SIG_IGN);
+ 
+-    if (::android::ProcessState::isVndservicemanagerEnabled()) {
++    const bool usesVndservicemanager = ::android::ProcessState::isVndservicemanagerEnabled();
++    if (usesVndservicemanager) {
+         ::android::ProcessState::initWithDriver("/dev/vndbinder");
+         ::android::ProcessState::self()->startThreadPool();
++    } else {
++        // NDK Binder and libbinder share ProcessState. Reconfiguring the pool
++        // after the legacy vndbinder pool has started aborts the process.
++        ABinderProcess_setThreadPoolMaxThreadCount(1);
++        ABinderProcess_startThreadPool();
+     }
+ 
+-    ABinderProcess_setThreadPoolMaxThreadCount(1);
+-    ABinderProcess_startThreadPool();
+-
+     const int32_t defaultValue = -1;
+     int32_t value =
+         property_get_int32("persist.vendor.audio.service.hwbinder.size_kbyte", defaultValue);
+-- 
+2.43.0
+

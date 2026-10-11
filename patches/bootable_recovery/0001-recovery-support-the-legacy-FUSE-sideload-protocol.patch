@@ -1,4 +1,4 @@
-From 88b89a773315a47bf8ec317cf148d87238e60f2d Mon Sep 17 00:00:00 2001
+From e5d44ccb81f9961c34066377a5d614c4c413eb4c Mon Sep 17 00:00:00 2001
 From: derveror <derveror@gmail.com>
 Date: Sun, 11 Oct 2026 17:31:33 -0400
 Subject: [PATCH] recovery: support the legacy FUSE sideload protocol
@@ -8,15 +8,15 @@ Change-Id: I2e27d616dfca0e9df1fe733388d38c1e09b70234
  fuse_sideload/fuse_sideload.cpp     | 13 +++----------
  fuse_sideload/include/fuse_compat.h | 30 +++++++++++++++++++++++++++++
  install/adb_install.cpp             |  3 ++-
- install/include/install/fuse_wait.h | 26 +++++++++++++++++++++++++
+ install/include/install/fuse_wait.h | 27 ++++++++++++++++++++++++++
  tests/unit/fuse_sideload_test.cpp   |  6 ++++++
- tests/unit/install_test.cpp         |  8 ++++++++
- 6 files changed, 75 insertions(+), 11 deletions(-)
+ tests/unit/install_test.cpp         | 11 +++++++++++
+ 6 files changed, 79 insertions(+), 11 deletions(-)
  create mode 100644 fuse_sideload/include/fuse_compat.h
  create mode 100644 install/include/install/fuse_wait.h
 
 diff --git a/fuse_sideload/fuse_sideload.cpp b/fuse_sideload/fuse_sideload.cpp
-index cb1db1851239356a8656cdd9fd323ba351d1136d..5f3614f925772eab150a3bb7b5f219b52265bdaf 100644
+index cb1db185..5f3614f9 100644
 --- a/fuse_sideload/fuse_sideload.cpp
 +++ b/fuse_sideload/fuse_sideload.cpp
 @@ -65,6 +65,8 @@
@@ -48,7 +48,7 @@ index cb1db1851239356a8656cdd9fd323ba351d1136d..5f3614f925772eab150a3bb7b5f219b5
    out.max_readahead = req->max_readahead;
 diff --git a/fuse_sideload/include/fuse_compat.h b/fuse_sideload/include/fuse_compat.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..2fd35e7c90058701465f25dd7bb44c610f346806
+index 00000000..2fd35e7c
 --- /dev/null
 +++ b/fuse_sideload/include/fuse_compat.h
 @@ -0,0 +1,30 @@
@@ -83,7 +83,7 @@ index 0000000000000000000000000000000000000000..2fd35e7c90058701465f25dd7bb44c61
 +  return sizeof(fuse_init_out);
 +}
 diff --git a/install/adb_install.cpp b/install/adb_install.cpp
-index 24b937b3d6deeebd101147b2c3db43d5fa831707..8917182f6f4df0257ed96edcec9807c9268957f3 100644
+index 24b937b3..8917182f 100644
 --- a/install/adb_install.cpp
 +++ b/install/adb_install.cpp
 @@ -43,6 +43,7 @@
@@ -105,10 +105,10 @@ index 24b937b3d6deeebd101147b2c3db43d5fa831707..8917182f6f4df0257ed96edcec9807c9
        } else {
 diff --git a/install/include/install/fuse_wait.h b/install/include/install/fuse_wait.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..16527c896e5786467714c919f2b82f5a6692dd82
+index 00000000..ab1c800e
 --- /dev/null
 +++ b/install/include/install/fuse_wait.h
-@@ -0,0 +1,26 @@
+@@ -0,0 +1,27 @@
 +/*
 + * Copyright (C) 2026 The LineageOS Project
 + *
@@ -129,14 +129,15 @@ index 0000000000000000000000000000000000000000..16527c896e5786467714c919f2b82f5a
 +
 +#include <errno.h>
 +
-+inline constexpr bool IsRetryableFuseStatError(int /* error */) {
-+  // Legacy FUSE implementations may transiently return errors other than
-+  // ENOENT while the mount is becoming ready. The caller's timeout bounds
-+  // the retry period.
-+  return true;
++inline constexpr bool IsRetryableFuseStatError(int error) {
++  // A legacy FUSE mount can briefly be absent, disconnected, stale, busy, or
++  // interrupted while minadbd is bringing it online. Permission and I/O
++  // failures are not readiness signals and must remain immediately visible.
++  return error == ENOENT || error == ENOTCONN || error == ESTALE || error == EAGAIN
++      || error == EINTR;
 +}
 diff --git a/tests/unit/fuse_sideload_test.cpp b/tests/unit/fuse_sideload_test.cpp
-index ea895038c20851d9b73d44443a60b2727711dc45..f03d7394257e06967652217e6c09284b0f064248 100644
+index ea895038..f03d7394 100644
 --- a/tests/unit/fuse_sideload_test.cpp
 +++ b/tests/unit/fuse_sideload_test.cpp
 @@ -25,12 +25,18 @@
@@ -159,7 +160,7 @@ index ea895038c20851d9b73d44443a60b2727711dc45..f03d7394257e06967652217e6c09284b
   public:
    FuseTestDataProvider(uint64_t file_size, uint32_t block_size)
 diff --git a/tests/unit/install_test.cpp b/tests/unit/install_test.cpp
-index c3415479dfc2225f3c7c9fe3c2cc2f0fe507781d..e411b1a380760c84e55ac577b7cd3d15c9572920 100644
+index c3415479..4a0f4192 100644
 --- a/tests/unit/install_test.cpp
 +++ b/tests/unit/install_test.cpp
 @@ -32,6 +32,7 @@
@@ -170,15 +171,18 @@ index c3415479dfc2225f3c7c9fe3c2cc2f0fe507781d..e411b1a380760c84e55ac577b7cd3d15
  #include "install/wipe_device.h"
  #include "otautil/paths.h"
  #include "private/setup_commands.h"
-@@ -50,6 +51,13 @@ static void BuildZipArchive(const std::map<std::string, std::string>& file_map,
+@@ -50,6 +51,16 @@ static void BuildZipArchive(const std::map<std::string, std::string>& file_map,
    ASSERT_EQ(0, fclose(zip_file));
  }
  
 +TEST(InstallTest, retries_while_legacy_kernel_finishes_fuse_mount) {
 +  EXPECT_TRUE(IsRetryableFuseStatError(ENOENT));
 +  EXPECT_TRUE(IsRetryableFuseStatError(ENOTCONN));
-+  EXPECT_TRUE(IsRetryableFuseStatError(EIO));
-+  EXPECT_TRUE(IsRetryableFuseStatError(EACCES));
++  EXPECT_TRUE(IsRetryableFuseStatError(EAGAIN));
++  EXPECT_TRUE(IsRetryableFuseStatError(EINTR));
++  EXPECT_TRUE(IsRetryableFuseStatError(ESTALE));
++  EXPECT_FALSE(IsRetryableFuseStatError(EIO));
++  EXPECT_FALSE(IsRetryableFuseStatError(EACCES));
 +}
 +
  TEST(InstallTest, read_metadata_from_package_smoke) {

@@ -1,0 +1,118 @@
+From 74d324584fc8c8496e14a5908d2730234d6ba2a1 Mon Sep 17 00:00:00 2001
+From: derveror <derveror@gmail.com>
+Date: Sun, 11 Oct 2026 17:31:33 -0400
+Subject: [PATCH] Settings: ignore callbacks after the Wi-Fi screen detaches
+
+Change-Id: I45298bf9ca2ab67feed1ff53f34d0df3ad4e6060
+---
+ .../network/NetworkProviderSettings.java      | 32 +++++++++++++++++--
+ .../network/NetworkProviderSettingsTest.java  | 25 +++++++++++++++
+ 2 files changed, 54 insertions(+), 3 deletions(-)
+
+diff --git a/src/com/android/settings/network/NetworkProviderSettings.java b/src/com/android/settings/network/NetworkProviderSettings.java
+index 2aa6726067b..5b1d7be89d5 100644
+--- a/src/com/android/settings/network/NetworkProviderSettings.java
++++ b/src/com/android/settings/network/NetworkProviderSettings.java
+@@ -66,6 +66,7 @@ import androidx.preference.PreferenceScreen;
+ import androidx.recyclerview.widget.RecyclerView;
+ 
+ import com.android.settings.AirplaneModeEnabler;
++import com.android.settings.ButtonBarHandler;
+ import com.android.settings.R;
+ import com.android.settings.accessibility.AccessibilitySetupWizardUtils;
+ import com.android.settings.core.SubSettingLauncher;
+@@ -1295,8 +1296,21 @@ public class NetworkProviderSettings extends RestrictedDashboardFragment
+      */
+     @VisibleForTesting
+     void changeNextButtonState(boolean enabled) {
+-        if (mEnableNextOnConnection && hasNextButton()) {
+-            getNextButton().setEnabled(enabled);
++        if (!mEnableNextOnConnection) {
++            return;
++        }
++
++        // WifiPickerTracker can deliver one final callback after this fragment's activity has
++        // been detached. Do not route that stale callback through SettingsPreferenceFragment,
++        // whose button helpers assume a live ButtonBarHandler activity.
++        final Activity activity = getActivity();
++        if (!(activity instanceof ButtonBarHandler)) {
++            return;
++        }
++
++        final ButtonBarHandler buttonBarHandler = (ButtonBarHandler) activity;
++        if (buttonBarHandler.hasNextButton()) {
++            buttonBarHandler.getNextButton().setEnabled(enabled);
+         }
+     }
+ 
+@@ -1576,11 +1590,23 @@ public class NetworkProviderSettings extends RestrictedDashboardFragment
+      * Implementation of {@code MobileDataEnabledListener.Client}
+      */
+     public void onMobileDataEnabledChange() {
++        // The listener may deliver one final callback after this fragment has been detached.
++        // Setup Wizard transitions away from this screen while telephony is still settling, so
++        // never dereference the stale fragment or its footer button here.
++        if (!isAdded()) {
++            return;
++        }
+         changeNextButtonState(getDataEnabled());
+     }
+ 
+     boolean getDataEnabled() {
+-        return getContext().getSystemService(TelephonyManager.class).getDataEnabled(mSubId);
++        final Context context = getContext();
++        if (context == null) {
++            return false;
++        }
++        final TelephonyManager telephonyManager =
++                context.getSystemService(TelephonyManager.class);
++        return telephonyManager != null && telephonyManager.getDataEnabled(mSubId);
+     }
+ 
+     /**
+diff --git a/tests/robotests/src/com/android/settings/network/NetworkProviderSettingsTest.java b/tests/robotests/src/com/android/settings/network/NetworkProviderSettingsTest.java
+index 9c881fe41bb..11bd19cabd3 100644
+--- a/tests/robotests/src/com/android/settings/network/NetworkProviderSettingsTest.java
++++ b/tests/robotests/src/com/android/settings/network/NetworkProviderSettingsTest.java
+@@ -210,6 +210,23 @@ public class NetworkProviderSettingsTest {
+         verify(mNetworkProviderSettings).handleAddNetworkRequest(anyInt(), any(Intent.class));
+     }
+ 
++    @Test
++    public void onMobileDataEnabledChange_whenDetached_doesNotTouchSetupWizardButton() {
++        doReturn(false).when(mNetworkProviderSettings).isAdded();
++        doNothing().when(mNetworkProviderSettings).changeNextButtonState(anyBoolean());
++
++        mNetworkProviderSettings.onMobileDataEnabledChange();
++
++        verify(mNetworkProviderSettings, never()).changeNextButtonState(anyBoolean());
++    }
++
++    @Test
++    public void getDataEnabled_whenContextIsGone_returnsFalse() {
++        doReturn(null).when(mNetworkProviderSettings).getContext();
++
++        assertThat(mNetworkProviderSettings.getDataEnabled()).isFalse();
++    }
++
+     @Test
+     public void setAdditionalSettingsSummaries_hasSavedNetwork_preferenceVisible() {
+         when(mMockWifiPickerTracker.getNumSavedNetworks()).thenReturn(NUM_NETWORKS);
+@@ -414,6 +431,14 @@ public class NetworkProviderSettingsTest {
+         verify(mNetworkProviderSettings).changeNextButtonState(anyBoolean());
+     }
+ 
++    @Test
++    public void changeNextButtonState_afterActivityDetached_doesNotCrash() {
++        ReflectionHelpers.setField(mNetworkProviderSettings, "mEnableNextOnConnection", true);
++        doReturn(null).when(mNetworkProviderSettings).getActivity();
++
++        mNetworkProviderSettings.changeNextButtonState(true);
++    }
++
+     @Test
+     public void openSubscriptionHelpPage_shouldCallStartActivityForResult() {
+         doReturn(new Intent()).when(mNetworkProviderSettings).getHelpIntent(mContext,
+-- 
+2.43.0
+

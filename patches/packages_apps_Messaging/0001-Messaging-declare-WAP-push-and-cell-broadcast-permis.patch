@@ -1,0 +1,26 @@
+From 56349c2633aaa610da4da52bb2d98354118f02f1 Mon Sep 17 00:00:00 2001
+From: derveror <derveror@gmail.com>
+Date: Sun, 11 Oct 2026 17:31:33 -0400
+Subject: [PATCH] Messaging: declare WAP push and cell broadcast permissions
+
+Change-Id: I4ccb1d5d23e699a19539e66cf771c5eefca7ad50
+---
+ AndroidManifest.xml | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/AndroidManifest.xml b/AndroidManifest.xml
+index c6ba856..f4fb3b1 100644
+--- a/AndroidManifest.xml
++++ b/AndroidManifest.xml
+@@ -29,6 +29,8 @@
+     <uses-permission android:name="android.permission.READ_SMS" />
+     <uses-permission android:name="android.permission.RECEIVE_SMS" />
+     <uses-permission android:name="android.permission.RECEIVE_MMS" />
++    <uses-permission android:name="android.permission.RECEIVE_WAP_PUSH" />
++    <uses-permission android:name="android.permission.READ_CELL_BROADCASTS" />
+     <uses-permission android:name="android.permission.SEND_SMS" />
+     <!-- Application needs access to MMS network -->
+     <uses-permission android:name="android.permission.INTERNET" />
+-- 
+2.43.0
+

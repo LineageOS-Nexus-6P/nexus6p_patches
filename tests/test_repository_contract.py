@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import csv
+from collections import Counter
 import stat
 import subprocess
 import unittest
@@ -23,6 +24,49 @@ def tracked_files():
 
 
 class RepositoryContractTest(unittest.TestCase):
+    def test_publishable_repository_contains_no_internal_implementation_plan(self):
+        self.assertFalse((ROOT / "docs/plans").exists())
+
+    def test_exported_patches_do_not_compile_out_error_handling(self):
+        for patch in sorted((ROOT / "patches").glob("*/*.patch")):
+            contents = patch.read_text(encoding="utf-8")
+            self.assertNotIn(
+                "+#if 0",
+                contents,
+                f"patch disables error handling with #if 0: {patch.relative_to(ROOT)}",
+            )
+
+    def test_patch_series_contains_no_formatting_only_patch(self):
+        """Every exported mail patch must change normalized source content."""
+        for patch in sorted((ROOT / "patches").glob("*/*.patch")):
+            added: list[str] = []
+            removed: list[str] = []
+            in_hunk = False
+
+            for line in patch.read_text(encoding="utf-8").splitlines():
+                if line == "-- ":
+                    in_hunk = False
+                elif line.startswith("diff --git "):
+                    in_hunk = False
+                elif line.startswith("@@"):
+                    in_hunk = True
+                elif in_hunk and line.startswith("+") and not line.startswith("+++"):
+                    normalized = " ".join(line[1:].split())
+                    if normalized:
+                        added.append(normalized)
+                elif in_hunk and line.startswith("-") and not line.startswith("---"):
+                    normalized = " ".join(line[1:].split())
+                    if normalized:
+                        removed.append(normalized)
+
+            if "GIT binary patch" in patch.read_text(encoding="utf-8"):
+                continue
+            self.assertNotEqual(
+                Counter(added),
+                Counter(removed),
+                f"formatting-only patch is not a device requirement: {patch.relative_to(ROOT)}",
+            )
+
     def test_documentation_covers_the_reproducible_build_workflow(self):
         readme_path = ROOT / "README.md"
         self.assertTrue(readme_path.is_file())

@@ -48,8 +48,9 @@ repo sync -c -j6
 ```
 
 Replace `YOUR_GITHUB_ORGANIZATION` only after the four standalone repositories
-exist. The manifest also pins the MSM8994 display and media donor branches; it
-does not add a LineageOS-UL platform remote.
+exist. The manifest pins the exact tested commits of all four Angler
+repositories and both MSM8994 donor projects while retaining their upstream
+branch metadata. It does not add a LineageOS-UL platform remote.
 
 ## Apply all platform changes
 

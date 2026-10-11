@@ -19,15 +19,17 @@ the tested P-CSCF, subscription identity, network request, and SIP AKA behavior.
 The missing MSM8994 `core`, `utils`, and `platform_lib_abstractions` closure
 was restored from `Ultra-Legacy-Hippeastrum/android_hardware_qcom_gps`,
 `lineage-21.0`, commit `bf8d5049a6318fad4791ebdbb13231ecfb373685`.
-Six ordered patches then adapt it to Android 15 Soong visibility and
-package-local headers. The exact series is in `patches/hardware_qcom_gps`.
+One squashed patch carries only the runtime sources and Android 15 Soong
+definitions; obsolete Android Make and autotools files are excluded. The
+exact patch is in `patches/hardware_qcom_gps`.
 
 ### `system/core`
 
-The first `system/core` patch retains PHH's old-kernel behavior for devices
-without usable cgroup v2. The second patch is the Angler Android 15 adaptation:
-it detects an unusable hierarchy, avoids repeated failures, and keeps one
-actionable warning.
+PHH's old-kernel behavior informed the Angler Android 15 adaptation, but its
+broad `init` error suppression is deliberately not carried. The retained
+patch handles the missing cgroup v2 hierarchy inside `libprocessgroup`, avoids
+repeated failures, and keeps one actionable warning without hiding unrelated
+service-start errors.
 
 ## Designs adapted rather than copied
 
@@ -37,6 +39,13 @@ UL's old-kernel approach informed these Angler-specific implementations:
   `netd` when `ro.kernel.ebpf.supported=false`;
 - the in-kernel LMK path that does not start unsupported PSI/memcg monitors;
 - compatibility handling for legacy cgroups and process migration.
+
+The non-eBPF route is required for the 3.10 kernel and is part of the
+real-device-tested voice-plus-LTE baseline. It keeps networking operational,
+but it is not equivalent to Android 15's eBPF-backed per-UID firewall, data
+saver, and traffic-accounting enforcement. Changing this route requires a
+separate security review and another combined calls-plus-LTE device test; it
+must not be casually replaced while preparing the public trees.
 
 These changes were written against the LineageOS 22.2 / Android 15 sources and
 are not copied UL framework trees.

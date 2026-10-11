@@ -1,0 +1,87 @@
+From d4943c595402799aaef0ca5ce6abb828bab2cc25 Mon Sep 17 00:00:00 2001
+From: derveror <derveror@gmail.com>
+Date: Sun, 11 Oct 2026 18:16:58 -0400
+Subject: [PATCH 6/6] telephony: only repair the required SMS AppOp
+
+---
+ .../internal/telephony/SmsApplication.java    |  9 ++++---
+ .../telephony/tests/SmsApplicationTest.java   | 24 +++++++++++++++++++
+ 2 files changed, 28 insertions(+), 5 deletions(-)
+
+diff --git a/telephony/common/com/android/internal/telephony/SmsApplication.java b/telephony/common/com/android/internal/telephony/SmsApplication.java
+index be34619acac1..134cedebc0f1 100644
+--- a/telephony/common/com/android/internal/telephony/SmsApplication.java
++++ b/telephony/common/com/android/internal/telephony/SmsApplication.java
+@@ -571,9 +571,8 @@ public final class SmsApplication {
+         // apps, all of them should be able to write to telephony provider.
+         // This is to allow the proxy package permission check in telephony provider
+         // to pass.
+-        for (String opStr : DEFAULT_APP_EXCLUSIVE_APPOPS) {
+-            appOps.setUidMode(opStr, Process.PHONE_UID, AppOpsManager.MODE_ALLOWED);
+-        }
++        appOps.setUidMode(AppOpsManager.OPSTR_WRITE_SMS, Process.PHONE_UID,
++                AppOpsManager.MODE_ALLOWED);
+     }
+ 
+     private static boolean tryFixExclusiveSmsAppops(Context context,
+@@ -791,7 +790,7 @@ public final class SmsApplication {
+                     packageName);
+             if (mode != AppOpsManager.MODE_ALLOWED) {
+                 Log.w(LOG_TAG, packageName + " does not have OP_WRITE_SMS:  (fixing)");
+-                setExclusiveAppops(packageName, appOps, info.applicationInfo.uid,
++                appOps.setUidMode(AppOpsManager.OPSTR_WRITE_SMS, info.applicationInfo.uid,
+                         AppOpsManager.MODE_ALLOWED);
+             }
+         } catch (NameNotFoundException e) {
+@@ -1323,4 +1322,4 @@ public final class SmsApplication {
+         }
+         return false;
+     }
+-}
+\ No newline at end of file
++}
+diff --git a/tests/TelephonyCommonTests/src/com/android/internal/telephony/tests/SmsApplicationTest.java b/tests/TelephonyCommonTests/src/com/android/internal/telephony/tests/SmsApplicationTest.java
+index adefac64dbae..66b0e4be0474 100644
+--- a/tests/TelephonyCommonTests/src/com/android/internal/telephony/tests/SmsApplicationTest.java
++++ b/tests/TelephonyCommonTests/src/com/android/internal/telephony/tests/SmsApplicationTest.java
+@@ -26,6 +26,7 @@ import static org.mockito.ArgumentMatchers.matches;
+ import static org.mockito.ArgumentMatchers.nullable;
+ import static org.mockito.Mockito.atLeastOnce;
+ import static org.mockito.Mockito.doAnswer;
++import static org.mockito.Mockito.never;
+ import static org.mockito.Mockito.times;
+ import static org.mockito.Mockito.verify;
+ import static org.mockito.Mockito.when;
+@@ -210,6 +211,29 @@ public class SmsApplicationTest {
+                 AppOpsManager.MODE_ALLOWED);
+     }
+ 
++    @Test
++    public void testGrantPermissionsToSystemAppsOnlySetsWriteSmsForPhonePackage()
++            throws Exception {
++        setupPackageInfosForCoreApps();
++        when(mAppOpsManager.unsafeCheckOp(AppOpsManager.OPSTR_WRITE_SMS, FAKE_PHONE_UID,
++                SmsApplication.PHONE_PACKAGE_NAME)).thenReturn(AppOpsManager.MODE_IGNORED);
++
++        SmsApplication.grantPermissionsToSystemApps(mContext);
++
++        verify(mAppOpsManager).setUidMode(AppOpsManager.OPSTR_WRITE_SMS,
++                FAKE_PHONE_UID, AppOpsManager.MODE_ALLOWED);
++        verify(mAppOpsManager, never()).setUidMode(AppOpsManager.OPSTR_READ_SMS,
++                FAKE_PHONE_UID, AppOpsManager.MODE_ALLOWED);
++        verify(mAppOpsManager, never()).setUidMode(AppOpsManager.OPSTR_RECEIVE_SMS,
++                FAKE_PHONE_UID, AppOpsManager.MODE_ALLOWED);
++        verify(mAppOpsManager, never()).setUidMode(AppOpsManager.OPSTR_RECEIVE_WAP_PUSH,
++                FAKE_PHONE_UID, AppOpsManager.MODE_ALLOWED);
++        verify(mAppOpsManager, never()).setUidMode(AppOpsManager.OPSTR_SEND_SMS,
++                FAKE_PHONE_UID, AppOpsManager.MODE_ALLOWED);
++        verify(mAppOpsManager, never()).setUidMode(AppOpsManager.OPSTR_READ_CELL_BROADCASTS,
++                FAKE_PHONE_UID, AppOpsManager.MODE_ALLOWED);
++    }
++
+     @Test
+     public void testPackageChanged() throws Exception {
+         setupPackageInfosForCoreApps();
+-- 
+2.43.0
+

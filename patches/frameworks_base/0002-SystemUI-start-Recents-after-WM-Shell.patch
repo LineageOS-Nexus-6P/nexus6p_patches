@@ -1,0 +1,44 @@
+From 3eb0da6210a8e0ce82b7a472c9668d777dd599c5 Mon Sep 17 00:00:00 2001
+From: derveror <derveror@gmail.com>
+Date: Sun, 11 Oct 2026 18:16:58 -0400
+Subject: [PATCH 2/6] SystemUI: start Recents after WM Shell
+
+---
+ .../com/android/systemui/recents/RecentsModule.java | 13 +++++++++++++
+ 1 file changed, 13 insertions(+)
+
+diff --git a/packages/SystemUI/src/com/android/systemui/recents/RecentsModule.java b/packages/SystemUI/src/com/android/systemui/recents/RecentsModule.java
+index 11089173a708..501ee9352345 100644
+--- a/packages/SystemUI/src/com/android/systemui/recents/RecentsModule.java
++++ b/packages/SystemUI/src/com/android/systemui/recents/RecentsModule.java
+@@ -21,7 +21,11 @@ import android.content.Context;
+ import com.android.systemui.CoreStartable;
+ import com.android.systemui.dagger.ContextComponentHelper;
+ import com.android.systemui.res.R;
++import com.android.systemui.startable.Dependencies;
+ import com.android.systemui.statusbar.policy.ConfigurationController.ConfigurationListener;
++import com.android.systemui.wmshell.WMShell;
++
++import java.util.Set;
+ 
+ import dagger.Binds;
+ import dagger.Module;
+@@ -42,6 +46,15 @@ public abstract class RecentsModule {
+     @ClassKey(Recents.class)
+     abstract CoreStartable bindRecentsStartable(Recents impl);
+ 
++    /** WM Shell must publish its external interfaces before Recents binds Launcher. */
++    @Provides
++    @IntoMap
++    @Dependencies
++    @ClassKey(Recents.class)
++    static Set<Class<? extends CoreStartable>> provideRecentsStartableDependencies() {
++        return Set.of(WMShell.class);
++    }
++
+     /** Listen to config changes for Recents.  */
+     @Binds
+     @IntoSet
+-- 
+2.43.0
+

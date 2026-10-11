@@ -1,0 +1,37 @@
+From 9e13a9c0dd597e01d3cbb5bfee1dec16cce5591c Mon Sep 17 00:00:00 2001
+From: derveror <derveror@gmail.com>
+Date: Sun, 11 Oct 2026 17:31:34 -0400
+Subject: [PATCH] libprocessgroup: tolerate an unavailable cgroup v2
+ hierarchy
+
+Change-Id: I6237a82367a4cf59a189212c6d075d47211ac4a8
+---
+ libprocessgroup/processgroup.cpp | 13 ++++++++++---
+ 1 file changed, 10 insertions(+), 3 deletions(-)
+
+diff --git a/libprocessgroup/processgroup.cpp b/libprocessgroup/processgroup.cpp
+index 95221594b6be7f4545ae406a9190388cd5ac3150..346d4e13667c690dd15e810d1cc6566fbcda6b03 100644
+--- a/libprocessgroup/processgroup.cpp
++++ b/libprocessgroup/processgroup.cpp
+@@ -710,9 +710,16 @@ int createProcessGroup(uid_t uid, pid_t initialPid, bool memControl) {
+         }
+     }
+ 
+-    std::string cgroup;
+-    CgroupGetControllerPath(CGROUPV2_HIERARCHY_NAME, &cgroup);
+-    return createProcessGroupInternal(uid, initialPid, cgroup, true);
++    auto cgroup_v2 = CgroupMap::GetInstance().FindController(CGROUPV2_HIERARCHY_NAME);
++    if (!cgroup_v2.IsUsable()) {
++        static std::once_flag warning_once;
++        std::call_once(warning_once, []() {
++            LOG(WARNING) << "Cgroup v2 is unavailable; skipping process cgroup creation";
++        });
++        return 0;
++    }
++
++    return createProcessGroupInternal(uid, initialPid, cgroup_v2.path(), true);
+ }
+ 
+ static bool SetProcessGroupValue(pid_t tid, const std::string& attr_name, int64_t value) {
+-- 
+2.43.0

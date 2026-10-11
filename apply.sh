@@ -128,6 +128,10 @@ for index in "${!project_paths[@]}"; do
         rm -rf "$temporary_clone"
         die "patch preflight failed: $project_path"
     fi
+    if ! git -C "$temporary_clone/project" diff --check "$baseline_commit"..HEAD; then
+        rm -rf "$temporary_clone"
+        die "patch introduces whitespace errors: $project_path"
+    fi
     validated_tree=$(git -C "$temporary_clone/project" rev-parse 'HEAD^{tree}')
     rm -rf "$temporary_clone"
     [ "$validated_tree" = "$result_tree" ] ||
@@ -166,4 +170,3 @@ for index in "${!project_paths[@]}"; do
         die "unexpected result tree after apply: $project_path"
     printf 'applied: %s\n' "$project_path"
 done
-

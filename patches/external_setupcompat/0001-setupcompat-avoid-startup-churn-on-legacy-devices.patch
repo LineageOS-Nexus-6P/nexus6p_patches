@@ -1,25 +1,25 @@
-From 45a03871425b90cae16c9c6d8a1121cc5d491b49 Mon Sep 17 00:00:00 2001
+From f1044e39fc57e03686ed1b06098374edd7198382 Mon Sep 17 00:00:00 2001
 From: derveror <derveror@gmail.com>
 Date: Sun, 11 Oct 2026 17:31:33 -0400
 Subject: [PATCH] setupcompat: avoid startup churn on legacy devices
 
 Change-Id: I2127905b6d28048e2fb4d22110e3db9424391c0e
 ---
- .../internal/SetupCompatServiceInvoker.java   |  5 --
- .../internal/SetupCompatServiceProvider.java  | 10 +++
- .../partnerconfig/PartnerConfigHelper.java    | 56 +++++++++++++
+ .../internal/SetupCompatServiceInvoker.java   |  5 -
+ .../internal/SetupCompatServiceProvider.java  | 10 ++
+ .../partnerconfig/PartnerConfigHelper.java    | 57 +++++++++++
  tests/Android.bp                              | 21 +++++
  tests/AndroidManifest.xml                     |  8 ++
  tests/res/values/styles.xml                   |  4 +
- .../PartnerConfigHelperTest.java              | 78 +++++++++++++++++++
- 7 files changed, 177 insertions(+), 5 deletions(-)
+ .../PartnerConfigHelperTest.java              | 94 +++++++++++++++++++
+ 7 files changed, 194 insertions(+), 5 deletions(-)
  create mode 100644 tests/Android.bp
  create mode 100644 tests/AndroidManifest.xml
  create mode 100644 tests/res/values/styles.xml
  create mode 100644 tests/src/com/google/android/setupcompat/partnerconfig/PartnerConfigHelperTest.java
 
 diff --git a/main/java/com/google/android/setupcompat/internal/SetupCompatServiceInvoker.java b/main/java/com/google/android/setupcompat/internal/SetupCompatServiceInvoker.java
-index 7208778b25dc57ae8560c05376dcbf6f2e0a096b..c9f3c863423db82a6b3407146dd7adf06d460aad 100644
+index 7208778..c9f3c86 100644
 --- a/main/java/com/google/android/setupcompat/internal/SetupCompatServiceInvoker.java
 +++ b/main/java/com/google/android/setupcompat/internal/SetupCompatServiceInvoker.java
 @@ -70,8 +70,6 @@ public class SetupCompatServiceInvoker {
@@ -42,7 +42,7 @@ index 7208778b25dc57ae8560c05376dcbf6f2e0a096b..c9f3c863423db82a6b3407146dd7adf0
      } catch (InterruptedException
          | TimeoutException
 diff --git a/main/java/com/google/android/setupcompat/internal/SetupCompatServiceProvider.java b/main/java/com/google/android/setupcompat/internal/SetupCompatServiceProvider.java
-index e259f225a3e809fdbd84eabd993de14534c1630c..ace93b38c1c3a80b9e61d2a93a86966e327f1417 100644
+index e259f22..ace93b3 100644
 --- a/main/java/com/google/android/setupcompat/internal/SetupCompatServiceProvider.java
 +++ b/main/java/com/google/android/setupcompat/internal/SetupCompatServiceProvider.java
 @@ -21,6 +21,7 @@ import android.content.ComponentName;
@@ -70,7 +70,7 @@ index e259f225a3e809fdbd84eabd993de14534c1630c..ace93b38c1c3a80b9e61d2a93a86966e
        LOG.atInfo("Unbinding existing service connection.");
        context.unbindService(serviceConnection);
 diff --git a/partnerconfig/java/com/google/android/setupcompat/partnerconfig/PartnerConfigHelper.java b/partnerconfig/java/com/google/android/setupcompat/partnerconfig/PartnerConfigHelper.java
-index 5a1c8035ed3b38871225199707d1abdd1e484907..e1c324ee5141faf0bd6ee31b9f2361ff082a1b25 100644
+index 5a1c803..f19ead3 100644
 --- a/partnerconfig/java/com/google/android/setupcompat/partnerconfig/PartnerConfigHelper.java
 +++ b/partnerconfig/java/com/google/android/setupcompat/partnerconfig/PartnerConfigHelper.java
 @@ -129,6 +129,8 @@ public class PartnerConfigHelper {
@@ -92,7 +92,15 @@ index 5a1c8035ed3b38871225199707d1abdd1e484907..e1c324ee5141faf0bd6ee31b9f2361ff
      if (resultBundle == null || resultBundle.isEmpty()) {
        try {
          resultBundle =
-@@ -944,6 +949,9 @@ public class PartnerConfigHelper {
+@@ -923,6 +928,7 @@ public class PartnerConfigHelper {
+   @VisibleForTesting
+   public static synchronized void resetInstance() {
+     instance = null;
++    partnerConfigProviderAvailable = null;
+     suwDayNightEnabledBundle = null;
+     applyExtendedPartnerConfigBundle = null;
+     applyMaterialYouConfigBundle = null;
+@@ -944,6 +950,9 @@ public class PartnerConfigHelper {
     * <p>Returns true if the setupwizard is listening to system DayNight theme setting.
     */
    public static boolean isSetupWizardDayNightEnabled(@NonNull Context context) {
@@ -102,7 +110,7 @@ index 5a1c8035ed3b38871225199707d1abdd1e484907..e1c324ee5141faf0bd6ee31b9f2361ff
      if (suwDayNightEnabledBundle == null) {
        try {
          suwDayNightEnabledBundle =
-@@ -967,6 +975,9 @@ public class PartnerConfigHelper {
+@@ -967,6 +976,9 @@ public class PartnerConfigHelper {
  
    /** Returns true if the SetupWizard supports the extended partner configs during setup flow. */
    public static boolean shouldApplyExtendedPartnerConfig(@NonNull Context context) {
@@ -112,7 +120,7 @@ index 5a1c8035ed3b38871225199707d1abdd1e484907..e1c324ee5141faf0bd6ee31b9f2361ff
      if (applyExtendedPartnerConfigBundle == null) {
        try {
          applyExtendedPartnerConfigBundle =
-@@ -994,6 +1005,9 @@ public class PartnerConfigHelper {
+@@ -994,6 +1006,9 @@ public class PartnerConfigHelper {
     * shouldApplyExtendedPartnerConfig() in SDK S as fallback.
     */
    public static boolean shouldApplyMaterialYouStyle(@NonNull Context context) {
@@ -122,7 +130,7 @@ index 5a1c8035ed3b38871225199707d1abdd1e484907..e1c324ee5141faf0bd6ee31b9f2361ff
      if (applyMaterialYouConfigBundle == null || applyMaterialYouConfigBundle.isEmpty()) {
        try {
          applyMaterialYouConfigBundle =
-@@ -1029,6 +1043,9 @@ public class PartnerConfigHelper {
+@@ -1029,6 +1044,9 @@ public class PartnerConfigHelper {
     */
    @Nullable
    public static String getSuwDefaultThemeString(@NonNull Context context) {
@@ -132,7 +140,7 @@ index 5a1c8035ed3b38871225199707d1abdd1e484907..e1c324ee5141faf0bd6ee31b9f2361ff
      if (suwDefaultThemeBundle == null || suwDefaultThemeBundle.isEmpty()) {
        try {
          suwDefaultThemeBundle =
-@@ -1053,6 +1070,9 @@ public class PartnerConfigHelper {
+@@ -1053,6 +1071,9 @@ public class PartnerConfigHelper {
  
    /** Returns true if the SetupWizard supports the dynamic color during setup flow. */
    public static boolean isSetupWizardDynamicColorEnabled(@NonNull Context context) {
@@ -142,7 +150,7 @@ index 5a1c8035ed3b38871225199707d1abdd1e484907..e1c324ee5141faf0bd6ee31b9f2361ff
      if (applyDynamicColorBundle == null) {
        try {
          applyDynamicColorBundle =
-@@ -1076,6 +1096,9 @@ public class PartnerConfigHelper {
+@@ -1076,6 +1097,9 @@ public class PartnerConfigHelper {
  
    /** Returns {@code true} if the SetupWizard supports the full dynamic color during setup flow. */
    public static boolean isSetupWizardFullDynamicColorEnabled(@NonNull Context context) {
@@ -152,7 +160,7 @@ index 5a1c8035ed3b38871225199707d1abdd1e484907..e1c324ee5141faf0bd6ee31b9f2361ff
      if (applyFullDynamicColorBundle == null) {
        try {
          applyFullDynamicColorBundle =
-@@ -1099,6 +1122,9 @@ public class PartnerConfigHelper {
+@@ -1099,6 +1123,9 @@ public class PartnerConfigHelper {
  
    /** Returns true if the SetupWizard supports the one-pane embedded activity during setup flow. */
    public static boolean isEmbeddedActivityOnePaneEnabled(@NonNull Context context) {
@@ -162,7 +170,7 @@ index 5a1c8035ed3b38871225199707d1abdd1e484907..e1c324ee5141faf0bd6ee31b9f2361ff
      if (applyEmbeddedActivityOnePaneBundle == null) {
        try {
          applyEmbeddedActivityOnePaneBundle =
-@@ -1123,6 +1149,9 @@ public class PartnerConfigHelper {
+@@ -1123,6 +1150,9 @@ public class PartnerConfigHelper {
  
    /** Returns true if the SetupWizard supports the neutral button style during setup flow. */
    public static boolean isNeutralButtonStyleEnabled(@NonNull Context context) {
@@ -172,7 +180,7 @@ index 5a1c8035ed3b38871225199707d1abdd1e484907..e1c324ee5141faf0bd6ee31b9f2361ff
      if (applyNeutralButtonStyleBundle == null) {
        try {
          applyNeutralButtonStyleBundle =
-@@ -1146,6 +1175,9 @@ public class PartnerConfigHelper {
+@@ -1146,6 +1176,9 @@ public class PartnerConfigHelper {
  
    /** Returns true if the SetupWizard supports the font weight customization during setup flow. */
    public static boolean isFontWeightEnabled(@NonNull Context context) {
@@ -182,7 +190,7 @@ index 5a1c8035ed3b38871225199707d1abdd1e484907..e1c324ee5141faf0bd6ee31b9f2361ff
      if (applyFontWeightBundle == null) {
        try {
          applyFontWeightBundle =
-@@ -1172,6 +1204,9 @@ public class PartnerConfigHelper {
+@@ -1172,6 +1205,9 @@ public class PartnerConfigHelper {
     * than the client.
     */
    public static boolean isGlifThemeControlledTransitionApplied(@NonNull Context context) {
@@ -192,7 +200,7 @@ index 5a1c8035ed3b38871225199707d1abdd1e484907..e1c324ee5141faf0bd6ee31b9f2361ff
      if (applyTransitionBundle == null || applyTransitionBundle.isEmpty()) {
        try {
          applyTransitionBundle =
-@@ -1195,6 +1230,9 @@ public class PartnerConfigHelper {
+@@ -1195,6 +1231,9 @@ public class PartnerConfigHelper {
  
    /** Returns a boolean indicate whether the force two pane feature enable or not. */
    public static boolean isForceTwoPaneEnabled(@NonNull Context context) {
@@ -202,7 +210,7 @@ index 5a1c8035ed3b38871225199707d1abdd1e484907..e1c324ee5141faf0bd6ee31b9f2361ff
      if (applyForceTwoPaneBundle == null || applyForceTwoPaneBundle.isEmpty()) {
        try {
          applyForceTwoPaneBundle =
-@@ -1217,6 +1255,9 @@ public class PartnerConfigHelper {
+@@ -1217,6 +1256,9 @@ public class PartnerConfigHelper {
  
    /** Returns whether the keyboard focus enhancement is enabled. */
    public static boolean isKeyboardFocusEnhancementEnabled(@NonNull Context context) {
@@ -212,7 +220,7 @@ index 5a1c8035ed3b38871225199707d1abdd1e484907..e1c324ee5141faf0bd6ee31b9f2361ff
      if (keyboardFocusEnhancementBundle == null || keyboardFocusEnhancementBundle.isEmpty()) {
        try {
          keyboardFocusEnhancementBundle =
-@@ -1244,6 +1285,10 @@ public class PartnerConfigHelper {
+@@ -1244,6 +1286,10 @@ public class PartnerConfigHelper {
     */
    public static boolean isGlifExpressiveEnabled(@NonNull Context context) {
  
@@ -223,7 +231,7 @@ index 5a1c8035ed3b38871225199707d1abdd1e484907..e1c324ee5141faf0bd6ee31b9f2361ff
      if (applyGlifExpressiveBundle == null || applyGlifExpressiveBundle.isEmpty()) {
        try {
          Activity activity = lookupActivityFromContext(context);
-@@ -1279,6 +1324,14 @@ public class PartnerConfigHelper {
+@@ -1279,6 +1325,14 @@ public class PartnerConfigHelper {
          .build();
    }
  
@@ -238,7 +246,7 @@ index 5a1c8035ed3b38871225199707d1abdd1e484907..e1c324ee5141faf0bd6ee31b9f2361ff
    private static TypedValue getTypedValueFromResource(Resources resource, int resId, int type) {
      TypedValue value = new TypedValue();
      resource.getValue(resId, value, true);
-@@ -1299,6 +1352,9 @@ public class PartnerConfigHelper {
+@@ -1299,6 +1353,9 @@ public class PartnerConfigHelper {
    }
  
    private static void registerContentObserver(Context context) {
@@ -250,7 +258,7 @@ index 5a1c8035ed3b38871225199707d1abdd1e484907..e1c324ee5141faf0bd6ee31b9f2361ff
          unregisterContentObserver(context);
 diff --git a/tests/Android.bp b/tests/Android.bp
 new file mode 100644
-index 0000000000000000000000000000000000000000..bed86b0fc273fc0e0d3b3f94ff1931181f54fef0
+index 0000000..bed86b0
 --- /dev/null
 +++ b/tests/Android.bp
 @@ -0,0 +1,21 @@
@@ -277,7 +285,7 @@ index 0000000000000000000000000000000000000000..bed86b0fc273fc0e0d3b3f94ff193118
 +}
 diff --git a/tests/AndroidManifest.xml b/tests/AndroidManifest.xml
 new file mode 100644
-index 0000000000000000000000000000000000000000..3e1de68e4bcb186cada5ea15a837e9c2fc0e3ccb
+index 0000000..3e1de68
 --- /dev/null
 +++ b/tests/AndroidManifest.xml
 @@ -0,0 +1,8 @@
@@ -291,7 +299,7 @@ index 0000000000000000000000000000000000000000..3e1de68e4bcb186cada5ea15a837e9c2
 +</manifest>
 diff --git a/tests/res/values/styles.xml b/tests/res/values/styles.xml
 new file mode 100644
-index 0000000000000000000000000000000000000000..12c3e2d5724a36fd5d600806683730cb7ffae203
+index 0000000..12c3e2d
 --- /dev/null
 +++ b/tests/res/values/styles.xml
 @@ -0,0 +1,4 @@
@@ -301,10 +309,10 @@ index 0000000000000000000000000000000000000000..12c3e2d5724a36fd5d600806683730cb
 +</resources>
 diff --git a/tests/src/com/google/android/setupcompat/partnerconfig/PartnerConfigHelperTest.java b/tests/src/com/google/android/setupcompat/partnerconfig/PartnerConfigHelperTest.java
 new file mode 100644
-index 0000000000000000000000000000000000000000..e1a85fa62855f4bf5942616cc366f9aa6bd9a969
+index 0000000..db7052c
 --- /dev/null
 +++ b/tests/src/com/google/android/setupcompat/partnerconfig/PartnerConfigHelperTest.java
-@@ -0,0 +1,78 @@
+@@ -0,0 +1,94 @@
 +/*
 + * Copyright (C) 2026 The LineageOS Project
 + * SPDX-License-Identifier: Apache-2.0
@@ -312,8 +320,8 @@ index 0000000000000000000000000000000000000000..e1a85fa62855f4bf5942616cc366f9aa
 +
 +package com.google.android.setupcompat.partnerconfig;
 +
-+import static org.junit.Assert.assertTrue;
 +import static org.junit.Assert.assertEquals;
++import static org.junit.Assert.assertTrue;
 +
 +import android.content.ContentResolver;
 +import android.content.Context;
@@ -341,6 +349,22 @@ index 0000000000000000000000000000000000000000..e1a85fa62855f4bf5942616cc366f9aa
 +    assertTrue(PartnerConfigHelper.isSetupWizardDayNightEnabled(context));
 +    assertEquals(0, contentResolver.acquireCount);
 +    assertEquals(1, context.packageManager.resolveCount);
++  }
++
++  @Test
++  public void resetInstanceClearsMissingProviderCache() {
++    PartnerConfigHelper.resetInstance();
++    MissingProviderContext firstContext =
++        new MissingProviderContext(new CountingContentResolver());
++    MissingProviderContext secondContext =
++        new MissingProviderContext(new CountingContentResolver());
++
++    assertTrue(PartnerConfigHelper.isSetupWizardDayNightEnabled(firstContext));
++    PartnerConfigHelper.resetInstance();
++    assertTrue(PartnerConfigHelper.isSetupWizardDayNightEnabled(secondContext));
++
++    assertEquals(1, firstContext.packageManager.resolveCount);
++    assertEquals(1, secondContext.packageManager.resolveCount);
 +  }
 +
 +  private static final class MissingProviderContext extends MockContext {

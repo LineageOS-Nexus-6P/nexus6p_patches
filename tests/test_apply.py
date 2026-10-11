@@ -121,6 +121,33 @@ class ApplyScriptTest(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("unsupported BUILD_ID", result.stdout)
 
+    def test_patch_with_whitespace_error_is_refused(self):
+        patch_path = (
+            self.kit
+            / "patches/platform_foo/0001-test-apply-fixture.patch"
+        )
+        (self.project / "value.txt").write_text("after  \n", encoding="utf-8")
+        run("git", "add", "value.txt", cwd=self.project)
+        run("git", "commit", "-m", "test: trailing whitespace", cwd=self.project)
+        result_tree = run(
+            "git", "rev-parse", "HEAD^{tree}", cwd=self.project
+        ).stdout.strip()
+        patch_path.write_text(
+            run("git", "format-patch", "-1", "--stdout", cwd=self.project).stdout,
+            encoding="utf-8",
+        )
+        run("git", "reset", "--hard", self.baseline, cwd=self.project)
+        (self.kit / "projects.tsv").write_text(
+            "# path\tbaseline\tresult_tree\tpatch_dir\n"
+            f"platform/foo\t{self.baseline}\t{result_tree}\tpatches/platform_foo\n",
+            encoding="utf-8",
+        )
+
+        result = self.apply("--check", check=False)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("whitespace errors", result.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()

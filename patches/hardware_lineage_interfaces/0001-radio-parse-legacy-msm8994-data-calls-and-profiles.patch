@@ -1,24 +1,47 @@
-From c975e256877d5da34763b1e24c691d8f28dfa884 Mon Sep 17 00:00:00 2001
+From 9c0fd8cf420694afe7da2ab5b143fbb32eea64e4 Mon Sep 17 00:00:00 2001
 From: derveror <derveror@gmail.com>
 Date: Sun, 11 Oct 2026 17:31:33 -0400
 Subject: [PATCH] radio: parse legacy msm8994 data calls and profiles
 
 Change-Id: I9d3799d2396ff0a7b2cb6e92cdc2579f1a46face
 ---
+ radio/1.4/legacy/Android.bp                   | 14 +++++
  radio/1.4/legacy/Helpers.cpp                  | 11 ++--
  radio/1.4/legacy/LegacyDataCall.h             | 26 +++++++++
  radio/1.4/legacy/LegacyDataProfile.h          | 55 +++++++++++++++++++
  radio/1.4/legacy/Radio.cpp                    |  5 +-
  radio/1.4/legacy/tests/LegacyDataCallTest.cpp | 22 ++++++++
  .../legacy/tests/LegacyDataProfileTest.cpp    | 40 ++++++++++++++
- 6 files changed, 151 insertions(+), 8 deletions(-)
+ 7 files changed, 165 insertions(+), 8 deletions(-)
  create mode 100644 radio/1.4/legacy/LegacyDataCall.h
  create mode 100644 radio/1.4/legacy/LegacyDataProfile.h
  create mode 100644 radio/1.4/legacy/tests/LegacyDataCallTest.cpp
  create mode 100644 radio/1.4/legacy/tests/LegacyDataProfileTest.cpp
 
+diff --git a/radio/1.4/legacy/Android.bp b/radio/1.4/legacy/Android.bp
+index 8d2894e..eda3274 100644
+--- a/radio/1.4/legacy/Android.bp
++++ b/radio/1.4/legacy/Android.bp
+@@ -30,3 +30,17 @@ cc_binary {
+         "android.hidl.safe_union@1.0",
+     ],
+ }
++
++cc_test_host {
++    name: "legacy_radio_data_call_test",
++    srcs: ["tests/LegacyDataCallTest.cpp"],
++    gtest: false,
++    test_suites: ["general-tests"],
++}
++
++cc_test_host {
++    name: "legacy_radio_data_profile_test",
++    srcs: ["tests/LegacyDataProfileTest.cpp"],
++    gtest: false,
++    test_suites: ["general-tests"],
++}
 diff --git a/radio/1.4/legacy/Helpers.cpp b/radio/1.4/legacy/Helpers.cpp
-index 76c1f321fffbab7a40efa33cbf82d456c15b3de4..8f3cc52d1411bdd1edd191381a1fac087f14887f 100644
+index 76c1f32..8f3cc52 100644
 --- a/radio/1.4/legacy/Helpers.cpp
 +++ b/radio/1.4/legacy/Helpers.cpp
 @@ -5,9 +5,10 @@
@@ -51,7 +74,7 @@ index 76c1f321fffbab7a40efa33cbf82d456c15b3de4..8f3cc52d1411bdd1edd191381a1fac08
  }
 diff --git a/radio/1.4/legacy/LegacyDataCall.h b/radio/1.4/legacy/LegacyDataCall.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..01b0290c1a110ad3302d314415a7b1cd88fd2290
+index 0000000..01b0290
 --- /dev/null
 +++ b/radio/1.4/legacy/LegacyDataCall.h
 @@ -0,0 +1,26 @@
@@ -83,7 +106,7 @@ index 0000000000000000000000000000000000000000..01b0290c1a110ad3302d314415a7b1cd
 +}  // namespace android::hardware::radio::implementation
 diff --git a/radio/1.4/legacy/LegacyDataProfile.h b/radio/1.4/legacy/LegacyDataProfile.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..efbd13515114c9e21621397c7a4239024b9dc513
+index 0000000..efbd135
 --- /dev/null
 +++ b/radio/1.4/legacy/LegacyDataProfile.h
 @@ -0,0 +1,55 @@
@@ -143,7 +166,7 @@ index 0000000000000000000000000000000000000000..efbd13515114c9e21621397c7a423902
 +
 +}  // namespace android::hardware::radio::implementation
 diff --git a/radio/1.4/legacy/Radio.cpp b/radio/1.4/legacy/Radio.cpp
-index 4af7e35a936219f8f8c3a82239008ff39b54adf1..03251d234ebd455608c4396b0358695ea30aba2e 100644
+index 4af7e35..03251d2 100644
 --- a/radio/1.4/legacy/Radio.cpp
 +++ b/radio/1.4/legacy/Radio.cpp
 @@ -8,6 +8,7 @@
@@ -167,7 +190,7 @@ index 4af7e35a936219f8f8c3a82239008ff39b54adf1..03251d234ebd455608c4396b0358695e
      legacyProfile.roamingProtocol = getProtocolStringFromInt(dataProfileInfo.roamingProtocol);
 diff --git a/radio/1.4/legacy/tests/LegacyDataCallTest.cpp b/radio/1.4/legacy/tests/LegacyDataCallTest.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..0c77e89180b903f94ccfe6eb3fc0f742c563f2cf
+index 0000000..0c77e89
 --- /dev/null
 +++ b/radio/1.4/legacy/tests/LegacyDataCallTest.cpp
 @@ -0,0 +1,22 @@
@@ -195,7 +218,7 @@ index 0000000000000000000000000000000000000000..0c77e89180b903f94ccfe6eb3fc0f742
 +}
 diff --git a/radio/1.4/legacy/tests/LegacyDataProfileTest.cpp b/radio/1.4/legacy/tests/LegacyDataProfileTest.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..0ad3988bc222904334050dac5aae69445dca8c33
+index 0000000..0ad3988
 --- /dev/null
 +++ b/radio/1.4/legacy/tests/LegacyDataProfileTest.cpp
 @@ -0,0 +1,40 @@

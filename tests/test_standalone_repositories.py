@@ -2,6 +2,7 @@
 
 import csv
 import hashlib
+import json
 import os
 import subprocess
 import unittest
@@ -10,7 +11,9 @@ from pathlib import Path
 
 ANDROID_ROOT_VALUE = os.environ.get("ANDROID_BUILD_TOP")
 ANDROID_ROOT = Path(ANDROID_ROOT_VALUE).resolve() if ANDROID_ROOT_VALUE else None
+PATCH_KIT_ROOT = Path(__file__).resolve().parents[1]
 LOCAL_WORKSPACE_PREFIX = "/home" "/surface"
+PRIVATE_KEY_MARKER = "BEGIN " "PRIVATE KEY"
 
 REPOSITORIES = (
     "device/huawei/angler",
@@ -23,6 +26,8 @@ FORBIDDEN_DEVICE_PATHS = (
     "CAMERA_PORTING_STATUS.md",
     "RIL_DONOR_ANALYSIS.md",
     "RIL_GOLDEN_BASELINE.md",
+    "camera/QCamera2/stack/mm-camera-test",
+    "camera/QCamera2/stack/mm-jpeg-interface/test",
     "__pycache__",
     "tests/__pycache__",
 )
@@ -62,6 +67,30 @@ class StandaloneRepositoryTest(unittest.TestCase):
         self.assertIn("nexus6p_patches", readme)
         self.assertNotIn("CAMERA_PORTING_STATUS", readme)
 
+    def test_device_dependencies_match_the_published_repository_layout(self):
+        dependency_file = ANDROID_ROOT / "device/huawei/angler/lineage.dependencies"
+        dependencies = json.loads(dependency_file.read_text(encoding="utf-8"))
+        self.assertEqual(
+            dependencies,
+            [
+                {
+                    "repository": "android_kernel_huawei_angler",
+                    "target_path": "kernel/huawei/angler",
+                    "branch": "lineage-22.2",
+                },
+                {
+                    "repository": "android_vendor_huawei_angler",
+                    "target_path": "vendor/huawei/angler",
+                    "branch": "lineage-22.2",
+                },
+                {
+                    "repository": "android_packages_apps_PhhIms",
+                    "target_path": "packages/apps/PhhIms",
+                    "branch": "lineage-22.2",
+                },
+            ],
+        )
+
     def test_public_sources_do_not_embed_the_local_workspace_path(self):
         for relative_path in REPOSITORIES:
             repository = ANDROID_ROOT / relative_path
@@ -92,13 +121,51 @@ class StandaloneRepositoryTest(unittest.TestCase):
                 self.assertEqual(path.read_bytes()[:2], b"#!")
 
     def test_public_repositories_contain_no_private_signing_keys(self):
-        private_suffixes = {".pk8", ".pem"}
+        private_suffixes = {".pk8", ".pem", ".jks", ".keystore"}
         for relative_path in REPOSITORIES:
             repository = ANDROID_ROOT / relative_path
             tracked = git(repository, "ls-files", "-z").split("\0")
             for tracked_path in tracked:
                 if tracked_path:
-                    self.assertNotIn(Path(tracked_path).suffix, private_suffixes)
+                    path = repository / tracked_path
+                    self.assertNotIn(path.suffix, private_suffixes)
+                    if not path.is_file() or path.is_symlink():
+                        continue
+                    try:
+                        contents = path.read_text(encoding="utf-8")
+                    except UnicodeDecodeError:
+                        continue
+                    self.assertNotIn(PRIVATE_KEY_MARKER, contents)
+
+    def test_standalone_repository_lock_matches_checked_out_revisions(self):
+        lock_file = PATCH_KIT_ROOT / "standalone-repositories.tsv"
+        with lock_file.open(encoding="utf-8", newline="") as stream:
+            rows = [
+                row
+                for row in csv.reader(stream, delimiter="\t")
+                if row and not row[0].startswith("#")
+            ]
+        for relative_path, branch, head, result_tree in rows:
+            repository = ANDROID_ROOT / relative_path
+            with self.subTest(repository=relative_path):
+                self.assertEqual(git(repository, "branch", "--show-current"), branch)
+                self.assertEqual(git(repository, "rev-parse", "HEAD"), head)
+                self.assertEqual(git(repository, "rev-parse", "HEAD^{tree}"), result_tree)
+
+    def test_ril_golden_baseline_is_unchanged(self):
+        verifier = (
+            ANDROID_ROOT
+            / "device/huawei/angler/tests/verify_ril_golden_baseline.sh"
+        )
+        result = subprocess.run(
+            ("bash", str(verifier)),
+            cwd=ANDROID_ROOT,
+            check=True,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+        )
+        self.assertIn("Angler RIL golden baseline: PASS", result.stdout)
 
     def test_vendor_blob_provenance_is_retained(self):
         provenance = ANDROID_ROOT / "vendor/huawei/angler/BLOB_PROVENANCE.tsv"
@@ -106,14 +173,36 @@ class StandaloneRepositoryTest(unittest.TestCase):
         self.assertGreater(provenance.stat().st_size, 0)
         vendor = provenance.parent
         with provenance.open(encoding="utf-8", newline="") as stream:
-            rows = csv.DictReader(stream, delimiter="\t")
-            for row in rows:
-                destination = vendor / "proprietary" / row["destination"]
-                with self.subTest(destination=row["destination"]):
-                    self.assertTrue(destination.is_file())
-                    payload = destination.read_bytes()
-                    self.assertEqual(hashlib.sha256(payload).hexdigest(), row["sha256"])
-                    self.assertEqual(len(payload), int(row["bytes"]))
+            rows = list(csv.DictReader(stream, delimiter="\t"))
+        destinations = [row["destination"] for row in rows]
+        tracked_blobs = {
+            path.removeprefix("proprietary/")
+            for path in git(vendor, "ls-files", "proprietary").splitlines()
+        }
+        self.assertEqual(len(destinations), len(set(destinations)))
+        self.assertEqual(set(destinations), tracked_blobs)
+        for row in rows:
+            destination = vendor / "proprietary" / row["destination"]
+            with self.subTest(destination=row["destination"]):
+                self.assertTrue(destination.is_file())
+                payload = destination.read_bytes()
+                self.assertEqual(hashlib.sha256(payload).hexdigest(), row["sha256"])
+                self.assertEqual(len(payload), int(row["bytes"]))
+
+    def test_vendor_tree_contains_no_audit_only_camera_blob(self):
+        vendor = ANDROID_ROOT / "vendor/huawei/angler"
+        audit_only_blob = "vendor/lib64/libmmcamera2_q3a_core.so"
+        self.assertFalse((vendor / "proprietary" / audit_only_blob).exists())
+        self.assertNotIn(
+            audit_only_blob,
+            (vendor / "BLOB_PROVENANCE.tsv").read_text(encoding="utf-8"),
+        )
+        self.assertNotIn(
+            audit_only_blob,
+            (
+                ANDROID_ROOT / "device/huawei/angler/proprietary-files.txt"
+            ).read_text(encoding="utf-8"),
+        )
 
     def test_phhims_is_self_contained(self):
         phhims = ANDROID_ROOT / "packages/apps/PhhIms"

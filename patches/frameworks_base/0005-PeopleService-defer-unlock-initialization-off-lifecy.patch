@@ -1,0 +1,107 @@
+From 83da3750a8717262f8c140456030d6829b6355d9 Mon Sep 17 00:00:00 2001
+From: derveror <derveror@gmail.com>
+Date: Sun, 11 Oct 2026 18:16:58 -0400
+Subject: [PATCH 5/6] PeopleService: defer unlock initialization off lifecycle
+ thread
+
+---
+ .../android/server/people/PeopleService.java  |  6 +++-
+ .../server/people/PeopleServiceTest.java      | 30 +++++++++++++++++++
+ 2 files changed, 35 insertions(+), 1 deletion(-)
+
+diff --git a/services/people/java/com/android/server/people/PeopleService.java b/services/people/java/com/android/server/people/PeopleService.java
+index b9f00d7979c2..f05480ec3b11 100644
+--- a/services/people/java/com/android/server/people/PeopleService.java
++++ b/services/people/java/com/android/server/people/PeopleService.java
+@@ -47,6 +47,7 @@ import android.util.ArrayMap;
+ import android.util.Slog;
+ 
+ import com.android.internal.annotations.VisibleForTesting;
++import com.android.internal.os.BackgroundThread;
+ import com.android.server.LocalServices;
+ import com.android.server.SystemService;
+ import com.android.server.people.data.DataManager;
+@@ -118,7 +119,10 @@ public class PeopleService extends SystemService {
+ 
+     @Override
+     public void onUserUnlocked(@NonNull TargetUser user) {
+-        getDataManager().onUserUnlocked(user.getUserIdentifier());
++        final int userId = user.getUserIdentifier();
++        // ShortcutService rescans legacy packages while holding its global lock during unlock.
++        // Never make the ActivityManager lifecycle handler wait for that disk-bound work.
++        BackgroundThread.getHandler().post(() -> getDataManager().onUserUnlocked(userId));
+     }
+ 
+     @Override
+diff --git a/services/tests/servicestests/src/com/android/server/people/PeopleServiceTest.java b/services/tests/servicestests/src/com/android/server/people/PeopleServiceTest.java
+index aed8491fdcde..76e5498d991e 100644
+--- a/services/tests/servicestests/src/com/android/server/people/PeopleServiceTest.java
++++ b/services/tests/servicestests/src/com/android/server/people/PeopleServiceTest.java
+@@ -23,6 +23,7 @@ import static com.google.common.truth.Truth.assertThat;
+ import static org.junit.Assert.assertEquals;
+ import static org.mockito.ArgumentMatchers.any;
+ import static org.mockito.ArgumentMatchers.eq;
++import static org.mockito.Mockito.doAnswer;
+ import static org.mockito.Mockito.mock;
+ import static org.mockito.Mockito.never;
+ import static org.mockito.Mockito.times;
+@@ -45,6 +46,7 @@ import android.content.pm.PackageManagerInternal;
+ import android.content.pm.ParceledListSlice;
+ import android.content.pm.ShortcutInfo;
+ import android.content.pm.ShortcutServiceInternal;
++import android.content.pm.UserInfo;
+ import android.os.Binder;
+ import android.os.Bundle;
+ import android.os.RemoteException;
+@@ -58,6 +60,7 @@ import androidx.test.InstrumentationRegistry;
+ 
+ import com.android.internal.config.sysui.SystemUiDeviceConfigFlags;
+ import com.android.server.LocalServices;
++import com.android.server.SystemService;
+ import com.android.server.notification.NotificationManagerInternal;
+ 
+ import org.junit.After;
+@@ -72,6 +75,11 @@ import org.mockito.MockitoAnnotations;
+ import java.util.ArrayList;
+ import java.util.Arrays;
+ import java.util.List;
++import java.util.concurrent.CountDownLatch;
++import java.util.concurrent.ExecutorService;
++import java.util.concurrent.Executors;
++import java.util.concurrent.Future;
++import java.util.concurrent.TimeUnit;
+ import java.util.function.Consumer;
+ 
+ @RunWith(AndroidTestingRunner.class)
+@@ -181,6 +189,28 @@ public final class PeopleServiceTest {
+         mServiceInternal.onDestroyPredictionSession(mSessionId);
+     }
+ 
++    @Test
++    public void testUserUnlockedDoesNotWaitForShortcutRegistration() throws Exception {
++        CountDownLatch registrationStarted = new CountDownLatch(1);
++        CountDownLatch releaseRegistration = new CountDownLatch(1);
++        doAnswer(invocation -> {
++            registrationStarted.countDown();
++            releaseRegistration.await(5, TimeUnit.SECONDS);
++            return null;
++        }).when(mShortcutServiceInternal).addShortcutChangeCallback(any());
++
++        ExecutorService executor = Executors.newSingleThreadExecutor();
++        Future<?> lifecycleCall = executor.submit(() -> mPeopleService.onUserUnlocked(
++                new SystemService.TargetUser(new UserInfo(USER_ID, "test", 0))));
++        try {
++            lifecycleCall.get(1, TimeUnit.SECONDS);
++            assertThat(registrationStarted.await(1, TimeUnit.SECONDS)).isTrue();
++        } finally {
++            releaseRegistration.countDown();
++            executor.shutdownNow();
++        }
++    }
++
+     @Test
+     public void testRegisterConversationListener() throws Exception {
+         assertEquals(0,
+-- 
+2.43.0
+

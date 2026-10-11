@@ -39,7 +39,22 @@ class ManifestTemplateTest(unittest.TestCase):
             "kernel/huawei/angler",
             "packages/apps/PhhIms",
         ):
-            self.assertEqual(projects[path].attrib["revision"], "refs/heads/lineage-22.2")
+            self.assertEqual(
+                projects[path].attrib.get("upstream"), "refs/heads/lineage-22.2"
+            )
+
+        expected_revisions = {
+            "device/huawei/angler": "197290e5056065423e136641340287ca827b479d",
+            "vendor/huawei/angler": "2256f968e072c2388286fd5e589d48513f202547",
+            "kernel/huawei/angler": "f34f4533ece113b5d01e44585902c81e105e3b22",
+            "packages/apps/PhhIms": "3909c4517022d3632c459b618101d13c8c73e966",
+            "hardware/qcom/display": "547dcd0bbe974a3f7540f134de592e6687674bec",
+            "hardware/qcom-caf/msm8994/media":
+                "e76c745c520ec3d36bd8b20ba019d331927db95a",
+        }
+        for path, revision in expected_revisions.items():
+            with self.subTest(path=path):
+                self.assertEqual(projects[path].attrib["revision"], revision)
 
         removed = {entry.attrib["path"] for entry in root.findall("remove-project")}
         self.assertEqual(removed, {"hardware/qcom/display"})

@@ -36,6 +36,11 @@ export ANDROID_BUILD_TOP=$source_root
 bash -n "$root/apply.sh" "$root/verify.sh"
 python3 -m unittest discover -v -s "$root/tests"
 "$root/apply.sh" --source "$source_root" --check
-git -C "$root" diff --check
+# Mail patches contain diff context and the standard "-- " mail signature,
+# which look like trailing whitespace when the patch file itself is added.
+# Their payload is checked above by applying every series and running
+# `git diff --check` inside each temporary project clone.
+git -C "$root" diff --check -- . ':(exclude)patches/**/*.patch'
+git -C "$root" diff --cached --check -- . ':(exclude)patches/**/*.patch'
 
 printf 'Nexus 6P patch-kit verification passed\n'

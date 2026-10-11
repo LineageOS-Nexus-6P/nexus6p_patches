@@ -1,0 +1,137 @@
+From f866c9b5d8147ed7e7a21b18ac809b0ab20cef01 Mon Sep 17 00:00:00 2001
+From: derveror <derveror@gmail.com>
+Date: Sun, 11 Oct 2026 18:16:58 -0400
+Subject: [PATCH 3/6] frameworks: reduce package-event log churn
+
+---
+ .../pm/BackgroundInstallControlService.java   |  5 ++-
+ .../android/server/pm/ShortcutService.java    | 39 +++++++++++++------
+ .../permission/access/appop/AppOpService.kt   |  5 +--
+ 3 files changed, 34 insertions(+), 15 deletions(-)
+
+diff --git a/services/core/java/com/android/server/pm/BackgroundInstallControlService.java b/services/core/java/com/android/server/pm/BackgroundInstallControlService.java
+index d538bb876b64..f8286069a479 100644
+--- a/services/core/java/com/android/server/pm/BackgroundInstallControlService.java
++++ b/services/core/java/com/android/server/pm/BackgroundInstallControlService.java
+@@ -93,6 +93,7 @@ public class BackgroundInstallControlService extends SystemService {
+     public @interface InstallEventType {}
+ 
+     private static final String TAG = "BackgroundInstallControlService";
++    private static final boolean DEBUG = false;
+ 
+     private static final String DISK_FILE_NAME = "states";
+     private static final String DISK_DIR_NAME = "bic";
+@@ -265,7 +266,9 @@ public class BackgroundInstallControlService extends SystemService {
+ 
+         @Override
+         public void handleMessage(Message msg) {
+-            Slog.d(TAG, "Package event received: " + msg.what);
++            if (DEBUG) {
++                Slog.d(TAG, "Package event received: " + msg.what);
++            }
+             switch (msg.what) {
+                 case MSG_USAGE_EVENT_RECEIVED:
+                     mService.handleUsageEvent(
+diff --git a/services/core/java/com/android/server/pm/ShortcutService.java b/services/core/java/com/android/server/pm/ShortcutService.java
+index 2c48d579b7f6..48ff1114ce97 100644
+--- a/services/core/java/com/android/server/pm/ShortcutService.java
++++ b/services/core/java/com/android/server/pm/ShortcutService.java
+@@ -174,7 +174,7 @@ public class ShortcutService extends IShortcutService.Stub {
+     static final boolean DEBUG = false; // STOPSHIP if true
+     static final boolean DEBUG_LOAD = false; // STOPSHIP if true
+     static final boolean DEBUG_PROCSTATE = false; // STOPSHIP if true
+-    static final boolean DEBUG_REBOOT = Build.IS_DEBUGGABLE;
++    static final boolean DEBUG_REBOOT = false;
+ 
+     @VisibleForTesting
+     static final long DEFAULT_RESET_INTERVAL_SEC = 24 * 60 * 60; // 1 day
+@@ -3953,36 +3953,53 @@ public class ShortcutService extends IShortcutService.Stub {
+                 final boolean replacing = intent.getBooleanExtra(Intent.EXTRA_REPLACING, false);
+                 final boolean archival = intent.getBooleanExtra(Intent.EXTRA_ARCHIVAL, false);
+ 
+-                Slog.d(TAG, "received package broadcast intent: " + intent);
++                if (DEBUG) {
++                    Slog.d(TAG, "received package broadcast intent: " + intent);
++                }
+                 switch (action) {
+                     case Intent.ACTION_PACKAGE_ADDED:
+                         if (replacing) {
+-                            Slog.d(TAG, "replacing package: " + packageName + " userId=" + userId);
++                            if (DEBUG) {
++                                Slog.d(TAG, "replacing package: " + packageName
++                                        + " userId=" + userId);
++                            }
+                             handlePackageUpdateFinished(packageName, userId);
+                         } else {
+-                            Slog.d(TAG, "adding package: " + packageName + " userId=" + userId);
++                            if (DEBUG) {
++                                Slog.d(TAG, "adding package: " + packageName
++                                        + " userId=" + userId);
++                            }
+                             handlePackageAdded(packageName, userId);
+                         }
+                         break;
+                     case Intent.ACTION_PACKAGE_REMOVED:
+                         if (!replacing || (replacing && archival)) {
+                             if (!replacing) {
+-                                Slog.d(TAG, "removing package: "
+-                                        + packageName + " userId=" + userId);
++                                if (DEBUG) {
++                                    Slog.d(TAG, "removing package: "
++                                            + packageName + " userId=" + userId);
++                                }
+                             } else if (archival) {
+-                                Slog.d(TAG, "archiving package: "
+-                                        + packageName + " userId=" + userId);
++                                if (DEBUG) {
++                                    Slog.d(TAG, "archiving package: "
++                                            + packageName + " userId=" + userId);
++                                }
+                             }
+                             handlePackageRemoved(packageName, userId);
+                         }
+                         break;
+                     case Intent.ACTION_PACKAGE_CHANGED:
+-                        Slog.d(TAG, "changing package: " + packageName + " userId=" + userId);
++                        if (DEBUG) {
++                            Slog.d(TAG, "changing package: " + packageName
++                                    + " userId=" + userId);
++                        }
+                         handlePackageChanged(packageName, userId);
+                         break;
+                     case Intent.ACTION_PACKAGE_DATA_CLEARED:
+-                        Slog.d(TAG, "clearing data for package: "
+-                                + packageName + " userId=" + userId);
++                        if (DEBUG) {
++                            Slog.d(TAG, "clearing data for package: "
++                                    + packageName + " userId=" + userId);
++                        }
+                         handlePackageDataCleared(packageName, userId);
+                         break;
+                 }
+diff --git a/services/permission/java/com/android/server/permission/access/appop/AppOpService.kt b/services/permission/java/com/android/server/permission/access/appop/AppOpService.kt
+index 161a8168d993..acfed743c9ec 100644
+--- a/services/permission/java/com/android/server/permission/access/appop/AppOpService.kt
++++ b/services/permission/java/com/android/server/permission/access/appop/AppOpService.kt
+@@ -265,7 +265,7 @@ class AppOpService(private val service: AccessCheckingService) : AppOpsCheckingS
+                     " callingUid = ${Binder.getCallingUid()}," +
+                     " oldMode = ${AppOpsManager.modeToName(oldMode)}"
+             if (wouldHaveChanged) {
+-                Slog.e(LOG_TAG, logMessage, RuntimeException())
++                Slog.e(LOG_TAG, logMessage)
+             } else {
+                 Slog.w(LOG_TAG, logMessage)
+             }
+@@ -299,8 +299,7 @@ class AppOpService(private val service: AccessCheckingService) : AppOpsCheckingS
+             Slog.w(
+                 LOG_TAG,
+                 "(packageName=$packageName, userId=$userId)'s appop state" +
+-                    " for runtime op $appOpName should not be set directly.",
+-                RuntimeException()
++                    " for runtime op $appOpName should not be set directly."
+             )
+             return
+         }
+-- 
+2.43.0
+

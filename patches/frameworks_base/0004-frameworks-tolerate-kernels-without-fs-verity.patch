@@ -1,0 +1,26 @@
+From b3bba7afc33e7847729f45d4ad58a59a322dface Mon Sep 17 00:00:00 2001
+From: derveror <derveror@gmail.com>
+Date: Sun, 11 Oct 2026 18:16:58 -0400
+Subject: [PATCH 4/6] frameworks: tolerate kernels without fs-verity
+
+---
+ .../core/java/com/android/server/security/FileIntegrity.java   | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/services/core/java/com/android/server/security/FileIntegrity.java b/services/core/java/com/android/server/security/FileIntegrity.java
+index b8f187e0ee3a..587a6671c3fb 100644
+--- a/services/core/java/com/android/server/security/FileIntegrity.java
++++ b/services/core/java/com/android/server/security/FileIntegrity.java
+@@ -63,6 +63,9 @@ public final class FileIntegrity {
+     @SystemApi(client = SystemApi.Client.SYSTEM_SERVER)
+     public static void setUpFsVerity(@NonNull ParcelFileDescriptor parcelFileDescriptor)
+             throws IOException {
++        if (!VerityUtils.isFsVeritySupported()) {
++            return;
++        }
+         VerityUtils.setUpFsverity(parcelFileDescriptor.getFd());
+     }
+ }
+-- 
+2.43.0
+

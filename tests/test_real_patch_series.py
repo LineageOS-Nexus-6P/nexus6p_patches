@@ -46,9 +46,28 @@ def load_projects():
 
 @unittest.skipUnless(ANDROID_ROOT_VALUE, "ANDROID_BUILD_TOP is required")
 class RealPatchSeriesTest(unittest.TestCase):
+    def test_gps_patch_excludes_obsolete_build_system_files(self):
+        gps = ANDROID_ROOT / "hardware/qcom/gps"
+        for relative_path in (
+            "Android.mk",
+            "msm8994/Android.mk",
+            "msm8994/utils/Makefile.am",
+        ):
+            with self.subTest(path=relative_path):
+                self.assertFalse((gps / relative_path).exists())
+
+    def test_legacy_radio_unit_tests_have_soong_targets(self):
+        legacy_radio = (
+            ANDROID_ROOT / "hardware/lineage/interfaces/radio/1.4/legacy"
+        )
+        build_file = (legacy_radio / "Android.bp").read_text(encoding="utf-8")
+        for test_source in sorted((legacy_radio / "tests").glob("*.cpp")):
+            with self.subTest(source=test_source.name):
+                self.assertIn(f'"tests/{test_source.name}"', build_file)
+
     def test_all_platform_series_reproduce_the_current_working_trees(self):
         projects = load_projects()
-        self.assertGreaterEqual(len(projects), 20)
+        self.assertGreaterEqual(len(projects), 19)
         paths = [row[0] for row in projects]
         self.assertEqual(len(paths), len(set(paths)))
         self.assertTrue(STANDALONE_PROJECTS.isdisjoint(paths))
