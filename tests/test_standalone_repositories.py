@@ -8,9 +8,9 @@ import unittest
 from pathlib import Path
 
 
-ANDROID_ROOT = Path(
-    os.environ.get("ANDROID_BUILD_TOP", "/home/surface/los-angler-22.2")
-).resolve()
+ANDROID_ROOT_VALUE = os.environ.get("ANDROID_BUILD_TOP")
+ANDROID_ROOT = Path(ANDROID_ROOT_VALUE).resolve() if ANDROID_ROOT_VALUE else None
+LOCAL_WORKSPACE_PREFIX = "/home" "/surface"
 
 REPOSITORIES = (
     "device/huawei/angler",
@@ -38,6 +38,7 @@ def git(repository: Path, *arguments: str) -> str:
     ).stdout.strip()
 
 
+@unittest.skipUnless(ANDROID_ROOT_VALUE, "ANDROID_BUILD_TOP is required")
 class StandaloneRepositoryTest(unittest.TestCase):
     def test_repositories_are_clean_lineage_22_2_branches(self):
         for relative_path in REPOSITORIES:
@@ -76,7 +77,7 @@ class StandaloneRepositoryTest(unittest.TestCase):
                 except UnicodeDecodeError:
                     continue
                 self.assertNotIn(
-                    "/home/surface", contents, f"local path embedded in {path}"
+                    LOCAL_WORKSPACE_PREFIX, contents, f"local path embedded in {path}"
                 )
 
     def test_device_executable_files_have_a_script_shebang(self):

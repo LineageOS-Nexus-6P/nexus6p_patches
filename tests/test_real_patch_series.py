@@ -9,9 +9,8 @@ from pathlib import Path
 
 
 PATCH_KIT_ROOT = Path(__file__).resolve().parents[1]
-ANDROID_ROOT = Path(
-    os.environ.get("ANDROID_BUILD_TOP", "/home/surface/los-angler-22.2")
-).resolve()
+ANDROID_ROOT_VALUE = os.environ.get("ANDROID_BUILD_TOP")
+ANDROID_ROOT = Path(ANDROID_ROOT_VALUE).resolve() if ANDROID_ROOT_VALUE else None
 LOCK_FILE = PATCH_KIT_ROOT / "projects.tsv"
 
 STANDALONE_PROJECTS = {
@@ -45,6 +44,7 @@ def load_projects():
     return projects
 
 
+@unittest.skipUnless(ANDROID_ROOT_VALUE, "ANDROID_BUILD_TOP is required")
 class RealPatchSeriesTest(unittest.TestCase):
     def test_all_platform_series_reproduce_the_current_working_trees(self):
         projects = load_projects()
