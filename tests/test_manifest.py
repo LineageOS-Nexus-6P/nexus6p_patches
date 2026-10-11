@@ -13,12 +13,13 @@ class ManifestTemplateTest(unittest.TestCase):
     def test_manifest_contains_only_required_overrides(self):
         self.assertTrue(TEMPLATE.is_file())
         template = TEMPLATE.read_text(encoding="utf-8")
-        self.assertIn("@NEXUS6P_ORG@", template)
+        self.assertIn("https://github.com/LineageOS-Nexus-6P/", template)
+        self.assertNotIn("@NEXUS6P_ORG@", template)
         self.assertNotIn("LineageOS-UL", template)
         self.assertNotIn("lineage-priv", template)
         self.assertNotIn("AP4A", template)
 
-        root = ET.fromstring(template.replace("@NEXUS6P_ORG@", "ExampleOrg"))
+        root = ET.fromstring(template)
         projects = {project.attrib["path"]: project for project in root.findall("project")}
         expected = {
             "device/huawei/angler": "android_device_huawei_angler",

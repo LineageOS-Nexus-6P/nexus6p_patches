@@ -1,8 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <manifest>
-  <!-- Replace @NEXUS6P_ORG@ with the GitHub organization name. -->
   <remote name="nexus6p-github"
-          fetch="https://github.com/@NEXUS6P_ORG@/" />
+          fetch="https://github.com/LineageOS-Nexus-6P/" />
   <remote name="davigamer-github"
           fetch="https://github.com/" />
 

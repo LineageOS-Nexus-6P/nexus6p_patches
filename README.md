@@ -12,7 +12,8 @@ Ultra Legacy tree. The exact limited UL provenance is documented in
 
 ## Required standalone repositories
 
-Create these repositories in the Nexus 6P organization on branch
+Create these repositories in
+[`LineageOS-Nexus-6P`](https://github.com/LineageOS-Nexus-6P) on branch
 `lineage-22.2`:
 
 | Repository | Android path |
@@ -35,16 +36,15 @@ repo init -u https://github.com/LineageOS/android.git \
     -b lineage-22.2
 
 mkdir -p .repo/local_manifests
-sed 's/@NEXUS6P_ORG@/YOUR_GITHUB_ORGANIZATION/g' \
-    ../nexus6p_patches/local_manifests/angler.xml.template \
-    > .repo/local_manifests/angler.xml
+cp ../nexus6p_patches/local_manifests/angler.xml.template \
+    .repo/local_manifests/angler.xml
 
 repo sync -c -j6
 ```
 
-Replace `YOUR_GITHUB_ORGANIZATION` only after the four standalone repositories
-exist. The manifest follows their `lineage-22.2` branches and the MSM8994 donor
-branches. It does not add a LineageOS-UL platform remote.
+The manifest reads the four standalone repositories from
+`LineageOS-Nexus-6P`, follows their `lineage-22.2` branches and follows the
+MSM8994 donor branches. It does not add a LineageOS-UL platform remote.
 
 ## Apply all platform changes
 
