@@ -35,8 +35,9 @@ The patch baseline is official `LineageOS/android` commit
 mkdir lineage-22.2-angler
 cd lineage-22.2-angler
 
-repo init -u https://github.com/LineageOS/android.git -b lineage-22.2
-git -C .repo/manifests checkout a2a0887cc58d45a6950a138b08a5724ea374c3d0
+repo init -u https://github.com/LineageOS/android.git \
+    -b a2a0887cc58d45a6950a138b08a5724ea374c3d0 \
+    --manifest-upstream-branch=lineage-22.2
 
 mkdir -p .repo/local_manifests
 sed 's/@NEXUS6P_ORG@/YOUR_GITHUB_ORGANIZATION/g' \

@@ -30,6 +30,8 @@ class RepositoryContractTest(unittest.TestCase):
         for required in (
             "LineageOS/android",
             "lineage-22.2",
+            "-b a2a0887cc58d45a6950a138b08a5724ea374c3d0",
+            "--manifest-upstream-branch=lineage-22.2",
             "repo sync -c -j6",
             "android_packages_apps_PhhIms",
             "apply.sh",
