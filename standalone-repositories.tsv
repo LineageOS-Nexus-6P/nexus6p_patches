@@ -1,5 +1,5 @@
-# path	branch	head	result_tree
-device/huawei/angler	lineage-22.2	976572f842d0ffa06776ee08948cd22cbee370bc	6d9f710baa3dc1a1f2e23fca0e849cb2c1ed04bd
-vendor/huawei/angler	lineage-22.2	2256f968e072c2388286fd5e589d48513f202547	64b74e8dab68b8696d5bd8c170a533f686c2df2a
-kernel/huawei/angler	lineage-22.2	f34f4533ece113b5d01e44585902c81e105e3b22	19b64a5b385c832507f24846a88ac7d004d9aa57
-packages/apps/PhhIms	lineage-22.2	3909c4517022d3632c459b618101d13c8c73e966	fa9767579fc23c9cf03b04f1ae7798e33d1619ee
+# path	branch
+device/huawei/angler	lineage-22.2
+vendor/huawei/angler	lineage-22.2
+kernel/huawei/angler	lineage-22.2
+packages/apps/PhhIms	lineage-22.2

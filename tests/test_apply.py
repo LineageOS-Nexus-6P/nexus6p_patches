@@ -63,9 +63,8 @@ class ApplyScriptTest(unittest.TestCase):
         run("git", "reset", "--hard", self.baseline, cwd=self.project)
 
         (self.kit / "projects.tsv").write_text(
-            "# path\tbaseline\tresult_tree\tpatch_dir\n"
-            f"platform/foo\t{self.baseline}\t{self.result_tree}\t"
-            "patches/platform_foo\n",
+            "# path\tpatch_dir\n"
+            "platform/foo\tpatches/platform_foo\n",
             encoding="utf-8",
         )
 
@@ -81,6 +80,8 @@ class ApplyScriptTest(unittest.TestCase):
     def test_check_validates_without_modifying_source(self):
         result = self.apply("--check")
         self.assertIn("applicable: platform/foo", result.stdout)
+        self.assertNotIn("error:", result.stdout)
+        self.assertNotIn("detached HEAD", result.stdout)
         self.assertEqual((self.project / "value.txt").read_text(), "before\n")
         self.assertEqual(
             run("git", "rev-parse", "HEAD", cwd=self.project).stdout.strip(),
@@ -106,13 +107,30 @@ class ApplyScriptTest(unittest.TestCase):
         self.assertIn("dirty repository: platform/foo", result.stdout)
         self.assertTrue((self.project / "local-change.txt").exists())
 
-    def test_unexpected_baseline_is_refused(self):
+    def test_squashed_patch_content_is_recognized_as_already_applied(self):
+        patch_path = self.kit / "patches/platform_foo/0001-test-apply-fixture.patch"
+        run("git", "apply", str(patch_path), cwd=self.project)
+        (self.project / "upstream.txt").write_text("same squashed commit\n")
+        run("git", "add", "value.txt", "upstream.txt", cwd=self.project)
+        run("git", "commit", "-m", "combined downstream changes", cwd=self.project)
+
+        result = self.apply()
+
+        self.assertIn("already applied: platform/foo", result.stdout)
+        self.assertEqual((self.project / "value.txt").read_text(), "after\n")
+
+    def test_patch_applies_after_an_unrelated_upstream_commit(self):
         (self.project / "unrelated.txt").write_text("different baseline\n")
         run("git", "add", "unrelated.txt", cwd=self.project)
-        run("git", "commit", "-m", "unexpected", cwd=self.project)
-        result = self.apply(check=False)
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("baseline mismatch: platform/foo", result.stdout)
+        run("git", "commit", "-m", "upstream: security update", cwd=self.project)
+
+        result = self.apply()
+
+        self.assertIn("applied: platform/foo", result.stdout)
+        self.assertEqual((self.project / "value.txt").read_text(), "after\n")
+        self.assertEqual(
+            (self.project / "unrelated.txt").read_text(), "different baseline\n"
+        )
 
     def test_ap4a_build_id_is_refused(self):
         build_id = self.source / "build/make/core/build_id.mk"
@@ -129,17 +147,14 @@ class ApplyScriptTest(unittest.TestCase):
         (self.project / "value.txt").write_text("after  \n", encoding="utf-8")
         run("git", "add", "value.txt", cwd=self.project)
         run("git", "commit", "-m", "test: trailing whitespace", cwd=self.project)
-        result_tree = run(
-            "git", "rev-parse", "HEAD^{tree}", cwd=self.project
-        ).stdout.strip()
         patch_path.write_text(
             run("git", "format-patch", "-1", "--stdout", cwd=self.project).stdout,
             encoding="utf-8",
         )
         run("git", "reset", "--hard", self.baseline, cwd=self.project)
         (self.kit / "projects.tsv").write_text(
-            "# path\tbaseline\tresult_tree\tpatch_dir\n"
-            f"platform/foo\t{self.baseline}\t{result_tree}\tpatches/platform_foo\n",
+            "# path\tpatch_dir\n"
+            "platform/foo\tpatches/platform_foo\n",
             encoding="utf-8",
         )
 

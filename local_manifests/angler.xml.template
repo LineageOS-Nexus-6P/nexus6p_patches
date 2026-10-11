@@ -9,22 +9,22 @@
   <project name="android_device_huawei_angler"
            path="device/huawei/angler"
            remote="nexus6p-github"
-           revision="976572f842d0ffa06776ee08948cd22cbee370bc"
+           revision="refs/heads/lineage-22.2"
            upstream="refs/heads/lineage-22.2" />
   <project name="android_vendor_huawei_angler"
            path="vendor/huawei/angler"
            remote="nexus6p-github"
-           revision="2256f968e072c2388286fd5e589d48513f202547"
+           revision="refs/heads/lineage-22.2"
            upstream="refs/heads/lineage-22.2" />
   <project name="android_kernel_huawei_angler"
            path="kernel/huawei/angler"
            remote="nexus6p-github"
-           revision="f34f4533ece113b5d01e44585902c81e105e3b22"
+           revision="refs/heads/lineage-22.2"
            upstream="refs/heads/lineage-22.2" />
   <project name="android_packages_apps_PhhIms"
            path="packages/apps/PhhIms"
            remote="nexus6p-github"
-           revision="3909c4517022d3632c459b618101d13c8c73e966"
+           revision="refs/heads/lineage-22.2"
            upstream="refs/heads/lineage-22.2" />
 
   <!-- Current LineageOS does not carry the complete MSM8994 display HAL. -->
@@ -33,11 +33,11 @@
   <project name="davigamer987/hardware_qcom_display"
            path="hardware/qcom/display"
            remote="davigamer-github"
-           revision="547dcd0bbe974a3f7540f134de592e6687674bec"
+           revision="refs/heads/lineage-23.0-caf-msm8994"
            upstream="refs/heads/lineage-23.0-caf-msm8994" />
   <project name="davigamer987/hardware_qcom_media"
            path="hardware/qcom-caf/msm8994/media"
            remote="davigamer-github"
-           revision="e76c745c520ec3d36bd8b20ba019d331927db95a"
+           revision="refs/heads/lineage-23.0-caf-msm8994"
            upstream="refs/heads/lineage-23.0-caf-msm8994" />
 </manifest>

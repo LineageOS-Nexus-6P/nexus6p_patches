@@ -82,8 +82,7 @@ class RepositoryContractTest(unittest.TestCase):
         for required in (
             "LineageOS/android",
             "lineage-22.2",
-            "-b a2a0887cc58d45a6950a138b08a5724ea374c3d0",
-            "--manifest-upstream-branch=lineage-22.2",
+            "-b lineage-22.2",
             "repo sync -c -j6",
             "android_packages_apps_PhhIms",
             "apply.sh",
@@ -93,6 +92,9 @@ class RepositoryContractTest(unittest.TestCase):
         ):
             with self.subTest(required=required):
                 self.assertIn(required, readme)
+        self.assertNotIn("a2a0887cc58d45a6950a138b08a5724ea374c3d0", readme)
+        self.assertNotIn("--manifest-upstream-branch", readme)
+        self.assertNotIn("apply.sh --source \"$PWD\" --check", readme)
 
     def test_ul_usage_is_documented_without_an_ul_manifest_override(self):
         ul_document = ROOT / "docs/UL_USAGE.md"
@@ -104,12 +106,13 @@ class RepositoryContractTest(unittest.TestCase):
         self.assertIn("not copied", text.lower())
         self.assertNotIn("LineageOS-UL/android.git", text)
 
-    def test_standalone_repository_lock_has_four_clean_public_projects(self):
+    def test_standalone_repository_list_has_four_clean_public_projects(self):
         lock = ROOT / "standalone-repositories.tsv"
         self.assertTrue(lock.is_file())
         with lock.open(encoding="utf-8", newline="") as stream:
             rows = [row for row in csv.reader(stream, delimiter="\t") if row and not row[0].startswith("#")]
         self.assertEqual(len(rows), 4)
+        self.assertTrue(all(len(row) == 2 for row in rows))
         self.assertEqual({row[1] for row in rows}, {"lineage-22.2"})
         self.assertEqual(
             {row[0] for row in rows},

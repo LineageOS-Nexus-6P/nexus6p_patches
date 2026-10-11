@@ -1,6 +1,6 @@
 # Nexus 6P patches for LineageOS 22.2
 
-This repository converts a pinned, clean official LineageOS 22.2 checkout
+This repository converts a freshly synced, clean official LineageOS 22.2 checkout
 into the tested Nexus 6P (`angler`) Android 15 source tree. Platform changes
 are stored as ordered per-project mail patches because the Android checkout is
 made of many independent Git repositories; `apply.sh` exposes them as one
@@ -22,22 +22,17 @@ Create these repositories in the Nexus 6P organization on branch
 | `android_kernel_huawei_angler` | `kernel/huawei/angler` |
 | `android_packages_apps_PhhIms` | `packages/apps/PhhIms` |
 
-`standalone-repositories.tsv` records the exact locally prepared heads and
-trees. `android_packages_apps_PhhIms` is intentionally separate: the local
-manifest downloads it directly into the Android environment.
+`android_packages_apps_PhhIms` is intentionally separate: the local manifest
+downloads it directly into the Android environment.
 
 ## Clean source preparation
-
-The patch baseline is official `LineageOS/android` commit
-`a2a0887cc58d45a6950a138b08a5724ea374c3d0` from `lineage-22.2`.
 
 ```sh
 mkdir lineage-22.2-angler
 cd lineage-22.2-angler
 
 repo init -u https://github.com/LineageOS/android.git \
-    -b a2a0887cc58d45a6950a138b08a5724ea374c3d0 \
-    --manifest-upstream-branch=lineage-22.2
+    -b lineage-22.2
 
 mkdir -p .repo/local_manifests
 sed 's/@NEXUS6P_ORG@/YOUR_GITHUB_ORGANIZATION/g' \
@@ -48,29 +43,23 @@ repo sync -c -j6
 ```
 
 Replace `YOUR_GITHUB_ORGANIZATION` only after the four standalone repositories
-exist. The manifest pins the exact tested commits of all four Angler
-repositories and both MSM8994 donor projects while retaining their upstream
-branch metadata. It does not add a LineageOS-UL platform remote.
+exist. The manifest follows their `lineage-22.2` branches and the MSM8994 donor
+branches. It does not add a LineageOS-UL platform remote.
 
 ## Apply all platform changes
 
-First perform a complete no-write preflight:
-
-```sh
-../nexus6p_patches/apply.sh --source "$PWD" --check
-```
-
-Then apply every required project series with one command:
+Apply every required project series with one command:
 
 ```sh
 ../nexus6p_patches/apply.sh --source "$PWD"
 ```
 
-The script refuses a dirty repository, an unexpected baseline, an unfinished
-`git am`, or a build ID other than `BP1A.250505.005`. It validates every series
-in a temporary clone before changing any project, checks the resulting tree,
-and treats a clean second invocation as already applied. It never runs a hard
-reset and never overwrites unrelated local work.
+The script refuses a dirty repository, an unfinished `git am`, or a build ID
+other than `BP1A.250505.005`. It validates every series against the currently
+synced project HEAD in a temporary clone before changing any project and treats
+a clean second invocation as already applied. It never runs a hard reset and
+never overwrites unrelated local work. `--check` is available as an optional
+no-write preflight, but it is not required before the normal command.
 
 ## Verify and build
 
@@ -97,9 +86,9 @@ local `out/` directory.
 The proprietary vendor tree includes `BLOB_PROVENANCE.tsv`. Review applicable
 redistribution terms before making proprietary binaries public.
 
-## Updating the official baseline
+## Updating LineageOS 22.2
 
-Do not apply these patches blindly to a newer LineageOS manifest. Update one
-project at a time, rebase its mail series, update `projects.tsv`, and run
-`verify.sh` plus a clean build and real-device regression pass. Calls and LTE
-data must be tested together before accepting any radio-related update.
+After a later `repo sync`, run `apply.sh` again on clean project heads. Its
+temporary-clone preflight will stop before modifying the checkout if an
+official update conflicts with a patch. Any radio-related patch update still
+requires calls and LTE data to be tested together on the real device.

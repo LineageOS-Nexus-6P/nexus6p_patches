@@ -12,8 +12,8 @@ usage() {
 Usage: apply.sh [--check] [--source PATH]
 
 Validate and apply the ordered Nexus 6P platform patch series to a clean,
-official LineageOS 22.2 checkout. --check performs the complete validation in
-temporary clones and does not modify the source tree.
+freshly synced official LineageOS 22.2 checkout. --check performs the complete
+validation in temporary clones and does not modify the source tree.
 EOF
 }
 
@@ -57,16 +57,14 @@ build_id=$(sed -n 's/^[[:space:]]*BUILD_ID[[:space:]]*=[[:space:]]*//p' \
     die "unsupported BUILD_ID: ${build_id:-unknown}; expected BP1A.250505.005"
 
 declare -a project_paths=()
-declare -a baseline_commits=()
-declare -a result_trees=()
 declare -a patch_directories=()
 
-while IFS=$'\t' read -r project_path baseline_commit result_tree patch_directory extra; do
+while IFS=$'\t' read -r project_path patch_directory extra; do
     case "$project_path" in
         ''|'#'*) continue ;;
     esac
     [ -z "${extra:-}" ] || die "invalid extra field in projects.tsv: $project_path"
-    [ -n "$baseline_commit" ] && [ -n "$result_tree" ] && [ -n "$patch_directory" ] ||
+    [ -n "$patch_directory" ] ||
         die "incomplete projects.tsv entry: $project_path"
     case "$project_path" in
         /*|*'..'*) die "unsafe project path: $project_path" ;;
@@ -75,19 +73,80 @@ while IFS=$'\t' read -r project_path baseline_commit result_tree patch_directory
         /*|*'..'*) die "unsafe patch path: $patch_directory" ;;
     esac
     project_paths+=("$project_path")
-    baseline_commits+=("$baseline_commit")
-    result_trees+=("$result_tree")
     patch_directories+=("$patch_directory")
 done < "$lock_file"
 
 [ "${#project_paths[@]}" -gt 0 ] || die 'projects.tsv contains no projects'
 
 declare -a states=()
+declare -a original_heads=()
+declare -a validated_trees=()
+
+series_is_at_head() {
+    local project_directory=$1
+    shift
+    local patches=("$@")
+    local patch_count=${#patches[@]}
+    local commits=()
+    local patch_index commit_index patch_id commit_id
+
+    mapfile -t commits < <(
+        git -C "$project_directory" rev-list --max-count="$patch_count" HEAD
+    )
+    [ "${#commits[@]}" -eq "$patch_count" ] || return 1
+
+    for patch_index in "${!patches[@]}"; do
+        commit_index=$((patch_count - patch_index - 1))
+        patch_id=$(git patch-id --stable < "${patches[$patch_index]}" |
+            awk 'NR == 1 { print $1 }')
+        commit_id=$(git -C "$project_directory" show --pretty=format: --no-ext-diff \
+            "${commits[$commit_index]}" | git patch-id --stable |
+            awk 'NR == 1 { print $1 }')
+        [ -n "$patch_id" ] && [ "$patch_id" = "$commit_id" ] || return 1
+    done
+}
+
+series_matches_worktree() {
+    local project_directory=$1
+    shift
+    local patches=("$@")
+    local temporary_clone patch_index
+
+    temporary_clone=$(mktemp -d)
+    if ! git -c advice.detachedHead=false clone --quiet --shared \
+            "$project_directory" "$temporary_clone/project"; then
+        rm -rf "$temporary_clone"
+        return 1
+    fi
+
+    for ((patch_index=${#patches[@]} - 1; patch_index >= 0; patch_index--)); do
+        if ! git -C "$temporary_clone/project" apply --reverse --check \
+                "${patches[$patch_index]}" >/dev/null 2>&1 ||
+                ! git -C "$temporary_clone/project" apply --reverse \
+                "${patches[$patch_index]}" >/dev/null 2>&1; then
+            rm -rf "$temporary_clone"
+            return 1
+        fi
+    done
+    for patch_index in "${!patches[@]}"; do
+        if ! git -C "$temporary_clone/project" apply --check \
+                "${patches[$patch_index]}" >/dev/null 2>&1 ||
+                ! git -C "$temporary_clone/project" apply \
+                "${patches[$patch_index]}" >/dev/null 2>&1; then
+            rm -rf "$temporary_clone"
+            return 1
+        fi
+    done
+
+    if ! git -C "$temporary_clone/project" diff --quiet --exit-code; then
+        rm -rf "$temporary_clone"
+        return 1
+    fi
+    rm -rf "$temporary_clone"
+}
 
 for index in "${!project_paths[@]}"; do
     project_path=${project_paths[$index]}
-    baseline_commit=${baseline_commits[$index]}
-    result_tree=${result_trees[$index]}
     patch_directory=${patch_directories[$index]}
     project_directory=$source_root/$project_path
     series_directory=$kit_root/$patch_directory
@@ -102,41 +161,43 @@ for index in "${!project_paths[@]}"; do
     [ ! -d "$(git -C "$project_directory" rev-parse --git-path rebase-apply)" ] ||
         die "unfinished git am operation: $project_path"
 
-    current_head=$(git -C "$project_directory" rev-parse HEAD)
-    current_tree=$(git -C "$project_directory" rev-parse 'HEAD^{tree}')
-    if [ "$current_tree" = "$result_tree" ]; then
-        states+=(applied)
-        continue
-    fi
-    [ "$current_head" = "$baseline_commit" ] ||
-        die "baseline mismatch: $project_path (have $current_head, expected $baseline_commit)"
-
     shopt -s nullglob
     patches=("$series_directory"/*.patch)
     shopt -u nullglob
     [ "${#patches[@]}" -gt 0 ] || die "empty patch series: $patch_directory"
 
+    current_head=$(git -C "$project_directory" rev-parse HEAD)
+    current_tree=$(git -C "$project_directory" rev-parse 'HEAD^{tree}')
+    original_heads+=("$current_head")
+    if series_is_at_head "$project_directory" "${patches[@]}" ||
+            series_matches_worktree "$project_directory" "${patches[@]}"; then
+        states+=(applied)
+        validated_trees+=("$current_tree")
+        continue
+    fi
+
     temporary_clone=$(mktemp -d)
-    if ! git clone --quiet --shared "$project_directory" "$temporary_clone/project"; then
+    if ! git -c advice.detachedHead=false clone --quiet --shared \
+            "$project_directory" "$temporary_clone/project"; then
         rm -rf "$temporary_clone"
         die "cannot create validation clone: $project_path"
     fi
     git -C "$temporary_clone/project" config user.name 'Nexus 6P Patch Kit'
     git -C "$temporary_clone/project" config user.email 'nexus6p-patches@localhost'
-    git -C "$temporary_clone/project" checkout --quiet --detach "$baseline_commit"
+    git -C "$temporary_clone/project" config advice.detachedHead false
+    git -C "$temporary_clone/project" checkout --quiet --detach "$current_head"
     if ! git -C "$temporary_clone/project" am --quiet --3way "${patches[@]}"; then
         rm -rf "$temporary_clone"
         die "patch preflight failed: $project_path"
     fi
-    if ! git -C "$temporary_clone/project" diff --check "$baseline_commit"..HEAD; then
+    if ! git -C "$temporary_clone/project" diff --check "$current_head"..HEAD; then
         rm -rf "$temporary_clone"
         die "patch introduces whitespace errors: $project_path"
     fi
     validated_tree=$(git -C "$temporary_clone/project" rev-parse 'HEAD^{tree}')
     rm -rf "$temporary_clone"
-    [ "$validated_tree" = "$result_tree" ] ||
-        die "result tree mismatch after preflight: $project_path"
     states+=(applicable)
+    validated_trees+=("$validated_tree")
 done
 
 if [ "$mode" = check ]; then
@@ -157,6 +218,9 @@ for index in "${!project_paths[@]}"; do
         continue
     fi
     project_directory=$source_root/$project_path
+    current_head=$(git -C "$project_directory" rev-parse HEAD)
+    [ "$current_head" = "${original_heads[$index]}" ] ||
+        die "repository changed after preflight: $project_path"
     series_directory=$kit_root/${patch_directories[$index]}
     shopt -s nullglob
     patches=("$series_directory"/*.patch)
@@ -166,7 +230,7 @@ for index in "${!project_paths[@]}"; do
         die "patch application failed and was rolled back: $project_path"
     fi
     applied_tree=$(git -C "$project_directory" rev-parse 'HEAD^{tree}')
-    [ "$applied_tree" = "${result_trees[$index]}" ] ||
+    [ "$applied_tree" = "${validated_trees[$index]}" ] ||
         die "unexpected result tree after apply: $project_path"
     printf 'applied: %s\n' "$project_path"
 done

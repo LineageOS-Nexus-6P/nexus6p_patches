@@ -137,7 +137,7 @@ class StandaloneRepositoryTest(unittest.TestCase):
                         continue
                     self.assertNotIn(PRIVATE_KEY_MARKER, contents)
 
-    def test_standalone_repository_lock_matches_checked_out_revisions(self):
+    def test_standalone_repository_list_matches_checked_out_branches(self):
         lock_file = PATCH_KIT_ROOT / "standalone-repositories.tsv"
         with lock_file.open(encoding="utf-8", newline="") as stream:
             rows = [
@@ -145,12 +145,10 @@ class StandaloneRepositoryTest(unittest.TestCase):
                 for row in csv.reader(stream, delimiter="\t")
                 if row and not row[0].startswith("#")
             ]
-        for relative_path, branch, head, result_tree in rows:
+        for relative_path, branch in rows:
             repository = ANDROID_ROOT / relative_path
             with self.subTest(repository=relative_path):
                 self.assertEqual(git(repository, "branch", "--show-current"), branch)
-                self.assertEqual(git(repository, "rev-parse", "HEAD"), head)
-                self.assertEqual(git(repository, "rev-parse", "HEAD^{tree}"), result_tree)
 
     def test_ril_golden_baseline_is_unchanged(self):
         verifier = (
@@ -166,6 +164,24 @@ class StandaloneRepositoryTest(unittest.TestCase):
             stderr=subprocess.STDOUT,
         )
         self.assertIn("Angler RIL golden baseline: PASS", result.stdout)
+
+    def test_ril_golden_hashes_do_not_pin_official_platform_files(self):
+        manifest = (
+            ANDROID_ROOT
+            / "device/huawei/angler/tests/ril_golden_files.sha256"
+        )
+        allowed_roots = (
+            "device/huawei/angler/",
+            "vendor/huawei/angler/",
+            "kernel/huawei/angler/",
+            "packages/apps/PhhIms/",
+        )
+        for line in manifest.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            path = line.split(maxsplit=1)[1]
+            with self.subTest(path=path):
+                self.assertTrue(path.startswith(allowed_roots))
 
     def test_vendor_blob_provenance_is_retained(self):
         provenance = ANDROID_ROOT / "vendor/huawei/angler/BLOB_PROVENANCE.tsv"
