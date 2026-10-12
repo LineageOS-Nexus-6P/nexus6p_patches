@@ -83,8 +83,8 @@ manifest. Never commit private signing keys, generated certificates, factory
 images, OTA packages, device logs, ramoops dumps, extracted user data, or the
 local `out/` directory.
 
-The proprietary vendor tree includes `BLOB_PROVENANCE.tsv`. Review applicable
-redistribution terms before making proprietary binaries public.
+Review applicable redistribution terms before making proprietary binaries
+public.
 
 ## Updating LineageOS 22.2
 
