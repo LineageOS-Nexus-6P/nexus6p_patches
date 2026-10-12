@@ -1,4 +1,4 @@
-From eaadc005a199b108ce438831e1763e7e3ce0da96 Mon Sep 17 00:00:00 2001
+From 0e6fadd3d936caec5eeff3d88bbc34399a788350 Mon Sep 17 00:00:00 2001
 From: derveror <derveror@gmail.com>
 Date: Sun, 11 Oct 2026 17:31:34 -0400
 Subject: [PATCH] Connectivity: add a non-eBPF path for legacy kernels
@@ -7,7 +7,7 @@ Change-Id: Ie6d4df308ebf2bdb7b2c6cf90484b8df52702a36
 ---
  bpf/dns_helper/DnsBpfHelper.cpp               |  8 ++++
  bpf/dns_helper/include/DnsHelperPublic.h      |  5 +-
- bpf/headers/include/bpf/BpfMap.h              |  8 +++-
+ bpf/headers/include/bpf/BpfMap.h              | 34 ++++++++++----
  bpf/loader/NetBpfLoad.cpp                     | 13 +++++
  bpf/netd/BpfHandler.cpp                       |  5 ++
  .../src/android/net/BpfNetMapsUtils.java      |  8 ++++
@@ -17,7 +17,7 @@ Change-Id: Ie6d4df308ebf2bdb7b2c6cf90484b8df52702a36
  ...id_server_connectivity_ClatCoordinator.cpp |  8 ++++
  .../src/com/android/server/BpfNetMaps.java    | 31 +++++++++++-
  .../server/net/NetworkStatsServiceTest.java   | 21 +++++++++
- 12 files changed, 152 insertions(+), 26 deletions(-)
+ 12 files changed, 172 insertions(+), 32 deletions(-)
 
 diff --git a/bpf/dns_helper/DnsBpfHelper.cpp b/bpf/dns_helper/DnsBpfHelper.cpp
 index 0719ade395..78088e34d9 100644
@@ -75,15 +75,47 @@ index 44b00128d9..e6eab1990d 100644
   */
  int ADnsHelper_isUidNetworkingBlocked(uid_t uid, bool metered);
 diff --git a/bpf/headers/include/bpf/BpfMap.h b/bpf/headers/include/bpf/BpfMap.h
-index 1037bebf29..9ae7137b2a 100644
+index 1037bebf29..7655a0e3ad 100644
 --- a/bpf/headers/include/bpf/BpfMap.h
 +++ b/bpf/headers/include/bpf/BpfMap.h
-@@ -72,8 +72,11 @@ class BpfMapRO {
+@@ -60,20 +60,37 @@ class BpfMapRO {
+ 
+   protected:
+     void abortOnMismatch(bool writable) const {
+-        if (!mMapFd.ok()) abort();
++        // Legacy kernels may not provide Android networking eBPF maps at all.
++        // Missing or incompatible maps must be reported to the caller instead
++        // of aborting a process such as system_server.
++        if (!mMapFd.ok()) return;
+         if (isAtLeastKernelVersion(4, 14, 0)) {
+             int flags = bpfGetFdMapFlags(mMapFd);
+-            if (flags < 0) abort();
+-            if (flags & BPF_F_WRONLY) abort();
+-            if (writable && (flags & BPF_F_RDONLY)) abort();
+-            if (bpfGetFdKeySize(mMapFd) != sizeof(Key)) abort();
+-            if (bpfGetFdValueSize(mMapFd) != sizeof(Value)) abort();
++            if (flags < 0) return;
++            if (flags & BPF_F_WRONLY) return;
++            if (writable && (flags & BPF_F_RDONLY)) return;
++            if (bpfGetFdKeySize(mMapFd) != sizeof(Key)) return;
++            if (bpfGetFdValueSize(mMapFd) != sizeof(Value)) return;
+         }
      }
  
    public:
 -    explicit BpfMapRO<Key, Value>(const char* pathname) {
-+    bool isOk() const { return mMapFd.ok(); }
++    bool isOk(bool writable = false) const {
++        if (!mMapFd.ok()) return false;
++        if (isAtLeastKernelVersion(4, 14, 0)) {
++            int flags = bpfGetFdMapFlags(mMapFd);
++            if (flags < 0) return false;
++            if (flags & BPF_F_WRONLY) return false;
++            if (writable && (flags & BPF_F_RDONLY)) return false;
++            if (bpfGetFdKeySize(mMapFd) != sizeof(Key)) return false;
++            if (bpfGetFdValueSize(mMapFd) != sizeof(Value)) return false;
++        }
++        return true;
++    }
 +
 +    explicit BpfMapRO<Key, Value>(const char* pathname, bool allowMissing = false) {
          mMapFd.reset(mapRetrieveRO(pathname));
@@ -91,7 +123,7 @@ index 1037bebf29..9ae7137b2a 100644
          abortOnMismatch(/* writable */ false);
      }
  
-@@ -233,8 +236,9 @@ class BpfMap : public BpfMapRO<Key, Value> {
+@@ -233,8 +250,9 @@ class BpfMap : public BpfMapRO<Key, Value> {
  
      BpfMap<Key, Value>() {};
  
