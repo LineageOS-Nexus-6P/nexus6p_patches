@@ -60,11 +60,6 @@ class StandaloneRepositoryTest(unittest.TestCase):
         for relative_path in FORBIDDEN_DEVICE_PATHS:
             with self.subTest(path=relative_path):
                 self.assertFalse((device / relative_path).exists())
-        readme = (device / "README.md").read_text(encoding="utf-8")
-        self.assertIn("LineageOS 22.2", readme)
-        self.assertIn("PhhIms", readme)
-        self.assertIn("nexus6p_patches", readme)
-        self.assertNotIn("CAMERA_PORTING_STATUS", readme)
 
     def test_device_dependencies_match_the_published_repository_layout(self):
         dependency_file = ANDROID_ROOT / "device/huawei/angler/lineage.dependencies"

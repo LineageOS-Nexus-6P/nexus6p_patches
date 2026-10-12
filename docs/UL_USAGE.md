@@ -61,13 +61,14 @@ The following UL changes are not copied into this port:
 - old RIL v6/v8/v9 compatibility patches, because Angler uses RIL v12;
 - a complete UL kernel or an `msm8994-common` device tree.
 
-Display and media use the pinned `davigamer987` MSM8994 donor branches. Camera
-comes from Angler/Google/LineageOS 17.1 lineage, while the kernel combines the
-Angler base with individually reviewed Google, OnePlus, and Sony-compatible
-backports.
+Display and media use organization-hosted forks of the pinned `davigamer987`
+MSM8994 donor branches. Camera comes from Angler/Google/LineageOS 17.1 lineage,
+while the kernel combines the Angler base with individually reviewed Google,
+OnePlus, and Sony-compatible backports.
 
-## Manifest policy
+## Source policy
 
-The official LineageOS `default.xml` is not edited. The local manifest adds
-only the four Nexus 6P repositories, replaces the incomplete current display
-project, and adds the MSM8994 media donor. It contains no LineageOS-UL remote.
+The official LineageOS `default.xml` is not edited. The four Nexus 6P
+repositories are cloned from `LineageOS-Nexus-6P` after the official sync.
+The MSM8994 display and media forks are checked out from
+`LineageOS-Nexus-6P` separately. No LineageOS-UL platform remote is added.

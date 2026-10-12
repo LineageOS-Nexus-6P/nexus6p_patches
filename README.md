@@ -23,8 +23,7 @@ Create these repositories in
 | `android_kernel_huawei_angler` | `kernel/huawei/angler` |
 | `android_packages_apps_PhhIms` | `packages/apps/PhhIms` |
 
-`android_packages_apps_PhhIms` is intentionally separate: the local manifest
-downloads it directly into the Android environment.
+`android_packages_apps_PhhIms` is cloned directly into the Android source tree.
 
 ## Clean source preparation
 
@@ -33,25 +32,57 @@ mkdir lineage-22.2-angler
 cd lineage-22.2-angler
 
 repo init -u https://github.com/LineageOS/android.git \
-    -b lineage-22.2
-
-mkdir -p .repo/local_manifests
-cp ../nexus6p_patches/local_manifests/angler.xml.template \
-    .repo/local_manifests/angler.xml
+    -b lineage-22.2 --git-lfs
 
 repo sync -c -j6
 ```
 
-The manifest reads the four standalone repositories from
-`LineageOS-Nexus-6P`, follows their `lineage-22.2` branches and follows the
-MSM8994 donor branches. It does not add a LineageOS-UL platform remote.
+## Copy the Nexus 6P trees
+
+```sh
+mkdir -p device/huawei vendor/huawei kernel/huawei packages/apps
+
+git clone -b lineage-22.2 --single-branch \
+    https://github.com/LineageOS-Nexus-6P/android_device_huawei_angler.git \
+    device/huawei/angler
+git clone -b lineage-22.2 --single-branch \
+    https://github.com/LineageOS-Nexus-6P/android_vendor_huawei_angler.git \
+    vendor/huawei/angler
+git clone -b lineage-22.2 --single-branch \
+    https://github.com/LineageOS-Nexus-6P/android_kernel_huawei_angler.git \
+    kernel/huawei/angler
+git clone -b lineage-22.2 --single-branch \
+    https://github.com/LineageOS-Nexus-6P/android_packages_apps_PhhIms.git \
+    packages/apps/PhhIms
+```
+
+The current device tree also requires the MSM8994 display and media donor
+branches:
+
+```sh
+git -C hardware/qcom/display remote add msm8994-donor \
+    https://github.com/LineageOS-Nexus-6P/hardware_qcom_display.git
+git -C hardware/qcom/display fetch msm8994-donor \
+    lineage-23.0-caf-msm8994
+git -C hardware/qcom/display switch -C lineage-23.0-caf-msm8994 FETCH_HEAD
+
+mkdir -p hardware/qcom-caf/msm8994
+git clone -b lineage-23.0-caf-msm8994 --single-branch \
+    https://github.com/LineageOS-Nexus-6P/hardware_qcom_media.git \
+    hardware/qcom-caf/msm8994/media
+```
 
 ## Apply all platform changes
 
-Apply every required project series with one command:
+Clone the patch directory inside the LineageOS source tree and apply every
+required project series with one command:
 
 ```sh
-../nexus6p_patches/apply.sh --source "$PWD"
+git clone -b lineage-22.2 --single-branch \
+    https://github.com/LineageOS-Nexus-6P/nexus6p_patches.git \
+    nexus6p_patches
+
+./nexus6p_patches/apply.sh --source .
 ```
 
 The script refuses a dirty repository, an unfinished `git am`, or a build ID
@@ -64,7 +95,7 @@ no-write preflight, but it is not required before the normal command.
 ## Verify and build
 
 ```sh
-../nexus6p_patches/verify.sh --source "$PWD"
+./nexus6p_patches/verify.sh --source .
 
 source build/envsetup.sh
 lunch lineage_angler-bp1a-userdebug
@@ -74,17 +105,6 @@ mka bacon -j6
 Do not use an `AP4A` platform tree. The `OPM7.181205.001` strings in the Angler
 device and vendor repositories identify the final stock firmware and stock
 fingerprint; they do not change the Android 15 platform build ID.
-
-## Signing and publication exclusions
-
-Release signing is local policy. Keep private signing keys under
-`vendor/lineage-priv/keys` or another private location outside every public
-manifest. Never commit private signing keys, generated certificates, factory
-images, OTA packages, device logs, ramoops dumps, extracted user data, or the
-local `out/` directory.
-
-Review applicable redistribution terms before making proprietary binaries
-public.
 
 ## Updating LineageOS 22.2
 

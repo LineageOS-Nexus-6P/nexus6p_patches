@@ -83,18 +83,22 @@ class RepositoryContractTest(unittest.TestCase):
             "LineageOS/android",
             "lineage-22.2",
             "-b lineage-22.2",
+            "--git-lfs",
             "repo sync -c -j6",
             "android_packages_apps_PhhIms",
+            "LineageOS-Nexus-6P/hardware_qcom_display",
+            "LineageOS-Nexus-6P/hardware_qcom_media",
             "apply.sh",
+            "./nexus6p_patches/apply.sh --source .",
             "BP1A.250505.005",
             "mka bacon -j6",
-            "private signing keys",
         ):
             with self.subTest(required=required):
                 self.assertIn(required, readme)
         self.assertNotIn("a2a0887cc58d45a6950a138b08a5724ea374c3d0", readme)
         self.assertNotIn("--manifest-upstream-branch", readme)
-        self.assertNotIn("apply.sh --source \"$PWD\" --check", readme)
+        self.assertNotIn("$PWD", readme)
+        self.assertNotIn("Signing and publication exclusions", readme)
 
     def test_ul_usage_is_documented_without_an_ul_manifest_override(self):
         ul_document = ROOT / "docs/UL_USAGE.md"
